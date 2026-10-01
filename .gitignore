@@ -1,0 +1,13 @@
+.gradle/
+.tools/
+.idea/
+local.properties
+**/build/
+upstream/
+app/src/main/jniLibs/
+app/src/main/assets/core/
+*.iml
+.DS_Store
+.codebase-memory/
+.core-cache/
+**/__pycache__/
