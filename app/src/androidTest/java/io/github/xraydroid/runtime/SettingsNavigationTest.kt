@@ -17,7 +17,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SettingsNavigationTest {
     @Test
-    fun settingsEntryOpensNetworkConfigurationAndReturnsToHome() {
+    fun settingsKeepsNetworkAndFrpSeparateAndReturnsToHome() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".validation")) {
@@ -31,6 +31,9 @@ class SettingsNavigationTest {
         awaitText("XrayDroid")
         clickText("設定")
         awaitText("出站網路")
+        awaitText("frp")
+        assertTrue("Network controls must remain inside the network subpage", matchingNodes("重新偵測").isEmpty())
+        clickText("出站網路")
         awaitText("重新偵測")
         // 已選取的單選項可能不提供無障礙點擊動作；先建立指定介面，再由 UI 切回系統。
         instrumentation.runOnMainSync { NetworkStore.selectInterface("xraydroid-navigation-unavailable") }
@@ -39,6 +42,19 @@ class SettingsNavigationTest {
         assertTrue("System selection must clear an explicitly selected interface", NetworkStore.state.value.selectedInterfaceName == null)
         clickText("重新偵測")
         awaitText("出站網路")
+        clickText("返回設定")
+        awaitText("frp")
+        assertTrue("Network controls must disappear after returning to settings", matchingNodes("重新偵測").isEmpty())
+        clickText("frp")
+        awaitText("frpc 用戶端")
+        awaitText("完整 TOML 設定")
+        assertTrue("frp must not display outbound network controls", matchingNodes("跟隨系統").isEmpty())
+        assertTrue(
+            "System Back action must return from frp to settings",
+            instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+        )
+        awaitText("出站網路")
+        assertTrue("frpc editor must disappear after leaving its subpage", matchingNodes("完整 TOML 設定").isEmpty())
         clickText("返回首頁")
         awaitText("XrayDroid")
         awaitText("管理面板")

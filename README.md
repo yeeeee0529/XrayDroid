@@ -1,6 +1,6 @@
 # XrayDroid
 
-將 **3x-ui v3.8.5 + Xray-core v26.6.27** 封裝為無需 root 的 Android App。
+將 **3x-ui v3.8.5 + Xray-core v26.6.27 + frpc v0.71.0** 封裝為無需 root 的 Android App。
 Kotlin + Jetpack Compose 原生控制介面採 Material 3 Expressive；完整管理功能沿用 3x-ui 網頁面板，由預設瀏覽器開啟。
 
 [繁體中文完整說明](docs/zh-TW/README.md) · [English documentation](docs/en/README.md) · [研究報告](3xui_Study.md) · [進度](docs/PROGRESS.md)
@@ -23,6 +23,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 面板固定為 `http://127.0.0.1:2053/`。首次登入沿用上游公開預設帳密 `admin` / `admin`，請立即在面板設定中更改。
 使用高於 1024 的入站連接埠；背景服務可從 App 或通知停止。
 首頁「設定」→「出站網路」可逐一查看介面、IP 與 DNS，選擇跟隨系統或指定介面（含 Android 可綁定的 VPN／虛擬介面）。切換會重啟核心；指定網路中斷時等待恢復，不會改走其他網路。
+
+「設定」提供獨立的「出站網路」與「frp」子頁。frp 支援完整 TOML 編輯、驗證、匯入、基本 TCP 範本與獨立啟停；連線至外部 frps，沿用 Android 系統網路。進階設定與 Android 限制見完整說明。
 
 管理面板的儲存統計顯示 App 資料所在分割區的容量與使用量。
 

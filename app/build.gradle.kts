@@ -18,6 +18,7 @@ android {
         ndk { abiFilters += "arm64-v8a" }
         buildConfigField("String", "XUI_VERSION", "\"3.8.5\"")
         buildConfigField("String", "XRAY_VERSION", "\"26.6.27\"")
+        buildConfigField("String", "FRP_VERSION", "\"0.71.0\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures {
@@ -33,6 +34,7 @@ android {
             useLegacyPackaging = true
             keepDebugSymbols += "**/libxui.so"
             keepDebugSymbols += "**/libxray.so"
+            keepDebugSymbols += "**/libfrpc.so"
         }
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
@@ -65,7 +67,7 @@ dependencies {
 
 val verifyCore by tasks.registering {
     doLast {
-        listOf("libxui.so", "libxray.so").forEach { name ->
+        listOf("libxui.so", "libxray.so", "libfrpc.so").forEach { name ->
             check(file("src/main/jniLibs/arm64-v8a/$name").isFile) {
                 "Missing $name. Run scripts/build-core.sh before packaging the APK."
             }

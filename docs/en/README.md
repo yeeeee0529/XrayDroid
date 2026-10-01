@@ -26,7 +26,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 Alternatively, set `sdk.dir` in `local.properties`. On macOS, the default NDK location is Homebrew's `/opt/homebrew/share/android-ndk`.
-The core script fetches official sources, verifies the 3x-ui commit and Xray release SHA256, applies pinned Android patches, and builds the upstream frontend and both Go executables. Xray is compiled from a pinned source commit; the official archive supplies geodata and licenses.
+The core script fetches official sources, verifies the 3x-ui commit and Xray release SHA256, applies pinned Android patches, and builds the upstream frontend and all three Go executables. Xray is compiled from a pinned source commit; the official archive supplies geodata and licenses.
+frpc v0.71.0 is built from a pinned commit with verified Go modules. Its Android patch preserves the full client and adds process lifecycle protection and a private status endpoint.
 Gradle does not download cores automatically and rejects APK packaging if required binaries/assets are missing.
 Material 3 is pinned to `1.5.0-alpha04` because stable `1.4.0` does not expose `MaterialExpressiveTheme`; upgrades require renewed native UI validation.
 The first build needs network access. `.tools/`, `.core-cache/`, `upstream/`, generated native executables, and geodata are excluded from Git.
@@ -48,7 +49,7 @@ The panel reports capacity and usage of the filesystem containing the app’s pr
 
 ## Outbound network
 
-Open Settings from the dashboard to configure outbound networks; the return button or Android Back gesture returns home. The settings page lists individual app-visible interfaces, such as `wlan0` and `tun1`, with IP addresses, DNS servers, status, and a refresh action. Names reflect existing device interfaces; the app does not create them.
+Open Settings → Outbound network from the dashboard. The return button or Android Back gesture returns to the settings index, then home. The outbound network subpage lists individual app-visible interfaces, such as `wlan0` and `tun1`, with IP addresses, DNS servers, status, and a refresh action. Names reflect existing device interfaces; the app does not create them.
 
 Selection persists by interface name and resolves the current Android network handle after reconnecting. A missing selected interface remains selected and waits for recovery, without switching to another interface of the same type. Existing transport-mode preferences remain supported.
 
@@ -62,6 +63,24 @@ Selecting an interface binds its associated Android network; Android chooses the
 
 Management-panel connections and inbound listeners retain their original routing. xicmp is unsupported with a selected network. Disabled radios, missing SIMs, and carrier restrictions can prevent cellular activation.
 
+## frp client
+
+Settings → frp provides the complete frpc v0.71.0 client for an external frps; the phone does not run frps. It has a separate foreground service and notification, so starting or stopping it does not control 3x-ui / Xray. frpc follows Android system routing, including a system VPN; Xray's selected outbound interface does not apply to frpc.
+
+1. Expand the starter form, enter the frps host, port, token, and TCP forwarding settings, generate the template, and confirm replacement. Alternatively edit or import TOML directly.
+2. The complete `frpc.toml` is authoritative. The starter form generates a replacement template and does not merge advanced settings. Import and template replacement require confirmation.
+3. Validate checks syntax and fields. Save validates before atomically writing private app data; invalid settings do not replace the saved file.
+4. Start and restart first validate and save the draft. Saving while running requires a restart to apply. Closing settings does not stop frpc.
+5. The proxy list displays native proxy statuses. “Client running” means the process and local status endpoint are available, rather than confirming that every proxy is connected. Stop through the frp page or its notification.
+
+The external token-command option is off by default, matching upstream safety defaults. To use a command-based `tokenSource`, stop frpc and enable the option; validation and startup then allow `TokenSourceExec`. Commands run with this app’s permissions and remain subject to Android executable-path restrictions. Importing a support file does not make it executable. The option persists separately without modifying TOML.
+
+Complete TOML supports upstream proxies, visitors, authentication, transports, TLS, plugins, and advanced fields within Android application UID and permission limits. VirtualNet requires TUN device access; this app has no Android VPNService and does not provide TUN or device-wide traffic interception. Plugins can only access resources available to this app; Linux system paths or privileged operations cannot be assumed. See [Progress](../PROGRESS.md) for actual protocol and advanced-configuration validation coverage.
+
+TOML imports must use UTF-8 and remain within 1 MiB. The support-file importer copies files of up to 16 MiB into private `support/UUID` filenames with safe extensions preserved (such as `.toml` or `.pem`) and shows the relative path without displaying contents. Update certificate, authentication, plugin, and other file paths in TOML accordingly. `includes` globs are supported, but imported filenames change and their paths must be adjusted. Leaving with an unsaved draft requires confirmation; activity recreation does not retain unsaved configuration.
+
+Settings reside at `filesDir/server/frp/frpc.toml`, are excluded from saved activity state, and the frp screen disables screen capture. Raw native logs and validation output are discarded; the UI shows generic diagnostics. The app reserves the client control endpoint: at launch it overrides upstream `webServer` settings with a loopback ephemeral port and one-time credentials, disables control-endpoint TLS, and overrides logging plus `loginFailExit = false` so frpc retries failed login. These runtime overrides do not modify the saved TOML. The native client handles reconnecting to frps.
+
 ## Architecture
 
 ```text
@@ -70,6 +89,10 @@ MainActivity → XuiService → nativeLibraryDir/libxui.so → libxray.so
 filesDir/server/{db,xray,log}
                   ↓
 Browser → http://127.0.0.1:2053/
+
+MainActivity → FrpService → nativeLibraryDir/libfrpc.so → external frps
+                  ↓
+filesDir/server/frp/{frpc.toml,support/}
 ```
 
 `XuiService` uses a user-started `specialUse` foreground service.
@@ -85,6 +108,18 @@ The upstream patch additionally protects against parent death; foreground servic
 ```
 
 Device tests cover native executable launch, embedded frontend, Xray child execution, panel login, VLESS TCP inbound creation / listening / deletion, background access, forced panel death cleanup, restart, shutdown, and database file retention.
+frpc forwarding tests require a local fixture. Run these commands in another terminal before the isolated device suite above; TCP/UDP forwarding is skipped without the fixture. The fixture listens only on loopback and uses the generated `.core-cache/frps`. Stop it with Ctrl+C and remove these two test forwards afterward.
+
+```bash
+adb reverse tcp:17000 tcp:17000
+adb reverse tcp:18080 tcp:18080
+python3 scripts/frp-validation-server.py
+# After the tests and fixture shutdown
+adb reverse --remove tcp:17000
+adb reverse --remove tcp:18080
+```
+
+frpc device tests cover TCP/UDP round trips, reconnects, independent lifecycle, invalid-save retention, support-file import, and cleanup of external token commands after stop or parent death. This does not establish that every frp protocol or plugin has been individually tested.
 Use the isolated validation package on a development device. Stop the regular package service first to release the fixed panel port; its data is preserved. Observed checks and limitations are recorded in [Progress](../PROGRESS.md).
 The panel's Go types depend on a newer Xray revision than v26.6.27. New protocols or fields require configuration-specific compatibility validation.
 

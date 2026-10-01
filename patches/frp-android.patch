@@ -1,0 +1,96 @@
+diff --git a/cmd/frpc/sub/root.go b/cmd/frpc/sub/root.go
+index 8a0f184..082fbb5 100644
+--- a/cmd/frpc/sub/root.go
++++ b/cmd/frpc/sub/root.go
+@@ -135,6 +135,9 @@ func runClient(cfgFilePath string, unsafeFeatures *security.UnsafeFeatures) erro
+ 
+ // runClientWithAggregator runs the client using the internal source aggregator.
+ func runClientWithAggregator(result *config.ClientConfigLoadResult, unsafeFeatures *security.UnsafeFeatures, cfgFilePath string) error {
++	if err := applyAndroidRuntimeConfig(result.Common); err != nil {
++		return err
++	}
+ 	configSource := source.NewConfigSource()
+ 	if err := configSource.ReplaceAll(result.Proxies, result.Visitors); err != nil {
+ 		return fmt.Errorf("failed to set config source: %w", err)
+diff --git a/cmd/frpc/main_android.go b/cmd/frpc/main_android.go
+new file mode 100644
+--- /dev/null
++++ b/cmd/frpc/main_android.go
+@@ -0,0 +1,27 @@
++//go:build android
++
++package main
++
++import (
++	"os"
++	"syscall"
++	"time"
++)
++
++func init() {
++	// 獨立 session 的程序群組 ID 等於 frpc PID，讓 App 可清理驗證命令的子程序。
++	if _, err := syscall.Setsid(); err != nil {
++		os.Exit(1)
++	}
++	parentPID := os.Getppid()
++	go func() {
++		for {
++			time.Sleep(250 * time.Millisecond)
++			// Go goroutine 可能切換執行緒，改以程序父 PID 避免綁定 thread 的死亡訊號。
++			if parentPID <= 1 || os.Getppid() != parentPID {
++				_ = syscall.Kill(-os.Getpid(), syscall.SIGKILL)
++				os.Exit(1)
++			}
++		}
++	}()
++}
+diff --git a/cmd/frpc/sub/runtime_android.go b/cmd/frpc/sub/runtime_android.go
+new file mode 100644
+--- /dev/null
++++ b/cmd/frpc/sub/runtime_android.go
+@@ -0,0 +1,31 @@
++//go:build android
++
++package sub
++
++import (
++	"fmt"
++	"os"
++	"strconv"
++
++	v1 "github.com/fatedier/frp/pkg/config/v1"
++)
++
++func applyAndroidRuntimeConfig(cfg *v1.ClientCommonConfig) error {
++	portText := os.Getenv("XRAYDROID_FRP_ADMIN_PORT")
++	if portText == "" {
++		return nil
++	}
++	port, err := strconv.Atoi(portText)
++	user := os.Getenv("XRAYDROID_FRP_ADMIN_USER")
++	password := os.Getenv("XRAYDROID_FRP_ADMIN_PASSWORD")
++	if err != nil || port < 1 || port > 65535 || user == "" || password == "" {
++		return fmt.Errorf("invalid Android frpc admin settings")
++	}
++	// App 管理狀態 API 與程序重連；完整代理、訪客與傳輸設定保持原樣。
++	cfg.WebServer = v1.WebServerConfig{Addr: "127.0.0.1", Port: port, User: user, Password: password}
++	cfg.Log.To = "/dev/null"
++	cfg.Log.Level = "error"
++	reconnect := false
++	cfg.LoginFailExit = &reconnect
++	return nil
++}
+diff --git a/cmd/frpc/sub/runtime_other.go b/cmd/frpc/sub/runtime_other.go
+new file mode 100644
+--- /dev/null
++++ b/cmd/frpc/sub/runtime_other.go
+@@ -0,0 +1,9 @@
++//go:build !android
++
++package sub
++
++import v1 "github.com/fatedier/frp/pkg/config/v1"
++
++func applyAndroidRuntimeConfig(_ *v1.ClientCommonConfig) error {
++	return nil
++}

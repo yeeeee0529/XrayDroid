@@ -22,6 +22,15 @@
             </intent-filter>
         </activity>
         <service
+            android:name=".runtime.FrpService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-started frpc reverse proxy client with persistent tunnels" />
+        </service>
+        <service
             android:name=".runtime.XuiService"
             android:exported="false"
             android:stopWithTask="false"

@@ -6,6 +6,27 @@
 
 [專案首頁](../README.md) · [繁體中文](zh-TW/README.md) · [English](en/README.md)
 
+## 完整 frpc 用戶端與獨立設定子頁
+
+- 整合官方 frpc v0.71.0，固定 commit `4a23aa181c1d7e28eecaa8216024ed753b9d27c8`；手機只執行 frpc，用戶提供外部 frps。設定索引分開「出站網路」與「frp」，子頁返回設定，再返回首頁。
+- `FrpService` 使用獨立前景服務與通知，不受 Xray 指定出站介面或其啟停控制；frpc 沿用 Android 系統網路。原始核心輸出與驗證錯誤丟棄；僅輪詢隨機本機連接埠、一次性驗證的狀態 API，不顯示原始錯誤內容。程序運作中不等同已登入 frps；代理狀態直接取自核心。
+- 完整 TOML 由官方 `frpc verify` 嚴格驗證，通過後才原子儲存；無效設定保留原檔與記憶體內容。支援設定匯入、支援檔案匯入、完整代理／訪客／外掛、基本 TCP 範本；範本與匯入取代草稿需確認。檔名改為 UUID，保留安全副檔名，`includes` 實際解析已驗證。草稿不寫入 Activity 狀態，frp 頁面停用螢幕擷取。
+- `webServer`、日誌與 `loginFailExit` 由 App 管理，已在 UI 與兩份完整 README 說明。`TokenSourceExec` 透過預設關閉的明確開關支援；Android 執行路徑限制仍適用。VirtualNet 的 TUN 不可在目前普通 App UID／未提供 VPNService 的架構使用。
+- Android 修補呼叫 `setsid`，建立 frpc 自有 session；父 PID 改變時清理整個程序群組。停止及異常清理同 UID、自有 session 的子程序，發送訊號前重新比對 UID、session 與啟動時間。啟動期間亦保存群組，避免外部權杖指令在核心尚未就緒時遺留。
+- 受影響檔案：`MainActivity.kt`、`ui/SettingsScreen.kt`、`ui/FrpScreen.kt`、`runtime/FrpStore.kt`、`runtime/FrpLayout.kt`、`runtime/FrpService.kt`、`runtime/OwnedProcesses.kt`、AndroidManifest、Gradle 核心封裝、`scripts/build-core.sh`、`scripts/build-frpc.sh`、`patches/frp-android.patch`、`scripts/frp-validation-server.py`、三個導覽／frpc 裝置 test、三份 README、CHANGELOG、AGENTS、第三方授權聲明與 frp 授權資產、`.gitignore` 的 Kotlin 快取規則。既有 3x-ui／Xray 核心修補不變。
+
+### 此輪實際驗證
+
+- 完整 `GOCACHE="$PWD/.core-cache/go-build" ./scripts/build-core.sh` 通過，包含官方資產校驗、三個 Android arm64 核心、3x-ui 與 frp 官方前端 build／frp vue-tsc type-check、Go 模組校驗。frpc ELF LOAD 段均為 16 KB 對齊；主機 frpc/frps 為測試工具，不封裝 frps 至 APK。上游前端仍有 glob deprecated 與 Rollup 註解警告，未變更無關相依版本。
+- frp 相關 `go test ./cmd/frpc/sub ./pkg/config/... ./client/...`、官方 Makefile 範圍完整 unit suite `go test -mod=readonly ./assets/... ./cmd/... ./client/... ./server/... ./pkg/...` 通過；Android 群組修補後再 build 與相關 test 通過。`gofmt`、`bash -n`、修補反向檢查與程式／文件 `git diff --check` 通過。新增官方 LICENSE 原文尾端有空白行，保留原檔；最終 staged whitespace 檢查只排除此官方授權資產。
+- `go test ./...` 另執行一次：核心套件通過，但上游 `test/e2e` 與歷史相容性 runner 因缺少指定執行檔／歷史基準版本而初始化失敗，不記為全數通過。未以相同版本冒充歷史 baseline；本 App 的 TCP／UDP 真機傳輸驗證另有實際通過證據。
+- `:app:ktlintFormat`、最終 `:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 通過；6 項 JVM test 全數通過，Android lint 0 errors、0 warnings，1 個非阻擋的 `mutableIntStateOf` 建議。主程式、裝置 test Kotlin 編譯與正式 APK 封裝通過。
+- Pixel 9 Pro XL／Android 17 隔離完整裝置 suite：10 項，9 通過、1 行動網路不可用 skipped、0 failures、0 errors。frpc 測試以本機 `.core-cache/frps` 與 adb reverse 17000／18080 完成 TCP／UDP 真實往返、斷線自動重連、重複啟動仍更新狀態、實際替換程序的重啟、SIGKILL 後錯誤及重新啟動、快速停止競態、設定保留、支援檔案匯入／includes、外部權杖指令 opt-in、停止期間及父程序死亡清理。既有面板登入／VLESS／背景／恢復、網路選擇與新設定導覽均通過。
+- 開發中首個 frpc test 的重啟等待讀到舊狀態，已改為等待新的程序群組後才模擬崩潰；導覽負向比對誤抓設定索引的說明文字，已改檢查編輯器標題。完整裝置 suite 最終無 failures；同輪 Gradle 曾被 `UseKtx` lint 阻擋，修正為相同儲存語意的 KTX 寫法後，正式封裝與全部靜態檢查通過。
+- 正式 application ID APK 的 `adb install -r` 更新成功，保留正式資料。冷啟動首頁及分離的設定索引已實際視覺檢查；frp 頁面依設計不可擷取。正式 3x-ui／Xray 已由首頁恢復啟動，兩個核心 PID 實際存在；測試伺服器與此次兩個 adb reverse 已清理。APK：`app/build/outputs/apk/debug/app-debug.apk`。
+- 未逐一驗證 HTTP／HTTPS／STCP／SUDP／XTCP／TCPMUX 的實際傳輸、OIDC、各外掛、各種 TLS／傳輸組合、真實網路長時間斷線與其他 Android／OEM。STCP 訪客及 SOCKS5 外掛的官方設定驗證通過，不等同實際傳輸已驗證。此輪未以任何使用者 frps 帳密或後端日誌作測試。
+- 本專案沒有 remote，完成後只 commit，不 push。
+
 ## Android 儲存統計修正
 
 - 根因：上游 `ServerService.GetStatus` 固定使用 `disk.Usage("/")`，讀到 Android 根分割區。真機 `adb shell df -h / /data` 顯示根分割區約 906 MB／903 MB，而資料分割區約 229 GB／87 GB、可用 141 GB；截圖的 99.7% 不代表 App 資料空間已滿。

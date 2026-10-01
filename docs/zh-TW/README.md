@@ -26,7 +26,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 也可用 `local.properties` 的 `sdk.dir` 指向 SDK。macOS 的 NDK 預設位置是 Homebrew 安裝路徑 `/opt/homebrew/share/android-ndk`。
-建置腳本下載官方來源、驗證 3x-ui commit 與 Xray 發行檔 SHA256，套用版本固定的修補，實際 build 上游前端與兩個 Go 執行檔。Xray 由固定 commit 原始碼編譯，官方發行檔提供地理資料與授權。
+建置腳本下載官方來源、驗證 3x-ui commit 與 Xray 發行檔 SHA256，套用版本固定的修補，實際 build 上游前端與三個 Go 執行檔。Xray 由固定 commit 原始碼編譯，官方發行檔提供地理資料與授權。
+frpc v0.71.0 由固定 commit 與 Go 模組校驗編譯，Android 修補保留完整用戶端，加入程序生命週期與私有狀態控制端點。
 Gradle 不會自動下載核心；缺少核心檔案時會明確拒絕包裝 APK。
 Material 3 固定使用 `1.5.0-alpha04`，因穩定版 `1.4.0` 尚未公開 `MaterialExpressiveTheme`；升級時需重新驗證原生介面。
 首次建置需要網路。`.tools/`、`.core-cache/`、`upstream/`、原生核心與產生的資產不加入 Git。
@@ -48,7 +49,7 @@ App 僅顯示自身生命週期日誌，避免將核心輸出可能包含的登�
 
 ## 出站網路
 
-從首頁右上「設定」進入出站網路設定；返回按鈕或 Android 返回手勢可回首頁。設定頁逐一列出 App 可見的介面（包括 `wlan0`、`tun1` 等）、IP、DNS 與連線狀態，支援「重新偵測」。介面名稱依裝置實際情況顯示，不由 App 建立。
+從首頁右上「設定」→「出站網路」進入；返回按鈕或 Android 返回手勢先回設定索引，再回首頁。出站網路子頁逐一列出 App 可見的介面（包括 `wlan0`、`tun1` 等）、IP、DNS 與連線狀態，支援「重新偵測」。介面名稱依裝置實際情況顯示，不由 App 建立。
 
 選擇會儲存並於下次啟動沿用。指定介面以名稱對應當下的 Android 網路，不儲存會隨重連變動的網路 handle（控制代碼）；介面消失後仍保留選擇並等待恢復，不改選其他同類型網路。既有依網路類型的選擇設定仍相容。
 
@@ -62,6 +63,24 @@ VPN 會獨立顯示，不再合併為系統預設。僅列舉到名稱但沒有�
 
 管理面板與入站監聽保持原本路由。手動選網路時不支援 xicmp。無線電關閉、無 SIM 或電信限制可能使行動網路無法啟用。
 
+## frp 用戶端
+
+「設定」→「frp」提供完整 frpc v0.71.0 用戶端，連線至外部 frps；手機不提供 frps 伺服器。此子頁與出站網路分開，frpc 使用獨立的 Foreground Service（前景服務）與通知，啟停不影響 3x-ui／Xray。frpc 沿用 Android 系統路由，包括系統 VPN；Xray 的指定出站介面不套用至 frpc。
+
+1. 使用「建立基本範本」填入 frps 主機、連接埠、驗證權杖及 TCP 轉發，點「產生範本」並確認取代草稿；也可直接編輯或「匯入 TOML」。
+2. 完整 `frpc.toml` 是設定來源。表單只建立範本，不回寫或合併既有進階設定；匯入與範本取代均需確認。
+3. 點「驗證設定」檢查格式與欄位，或「儲存設定」驗證後原子寫入 App 私有目錄。無效設定不覆寫已儲存檔案。
+4. 點「啟動 frpc」；啟動與重新啟動會先驗證、儲存草稿。執行中儲存設定後需重新啟動套用。首頁服務與 frpc 分別控制，關閉設定頁不會停止 frpc。
+5. 代理列表顯示核心回報的代理狀態；「用戶端運作中」表示程序與本機狀態端點可用，不保證全部代理已連線。可從子頁或 frp 通知停止。
+
+「允許外部權杖指令」預設關閉，與上游安全預設一致。若設定 `tokenSource` 透過外部指令取得權杖，需先停止 frpc，再開啟此選項；驗證與啟動會啟用 `TokenSourceExec`。外部指令使用此 App 的權限，其執行檔仍須符合 Android 可執行路徑限制；從檔案選擇器匯入支援檔案不代表該檔案可執行。此選項會獨立儲存，不改寫 TOML。
+
+完整 TOML 支援上游代理、訪客、驗證、傳輸、TLS、外掛及其他進階欄位，實際功能受 Android App UID 與系統權限限制。VirtualNet（虛擬網路）的 TUN 裝置功能需要系統支援與權限；本 App 沒有 Android VPNService（VPN 服務），不提供 TUN 或全裝置流量接管。外掛只能使用 App 可存取的資源；不能假設 Linux 系統檔案或特權可用。各協定與進階組合的實際驗證範圍見[進度紀錄](../PROGRESS.md)。
+
+TOML 匯入限制為 UTF-8、1 MiB。「匯入憑證或檔案」將單檔最多 16 MiB 的資料複製至私有 `support/UUID` 檔名並保留安全的副檔名（例如 `.toml`、`.pem`），畫面顯示可填入 TOML 的相對路徑；檔案內容不顯示。請調整 TLS 憑證、驗證檔案、外掛檔案等路徑；`includes` 萬用字元可使用，但匯入的檔名已更換，須依實際路徑調整。返回時會確認捨棄未儲存草稿；畫面重建不保留未儲存設定。
+
+設定存在 `filesDir/server/frp/frpc.toml`，不寫入 Activity 儲存狀態；frp 頁面停用螢幕擷取。核心原始日誌與驗證錯誤輸出會丟棄，介面僅顯示不含原始輸出的診斷。App 保留本機控制端點：啟動時覆寫上游 `webServer` 設定為 loopback（本機回送）臨時連接埠與一次性憑證、停用控制端點 TLS，並覆寫日誌與 `loginFailExit = false`，讓連線失敗由 frpc 重試；儲存的 TOML 不因此修改。frps 中斷後由核心重新連線，並非每次重建 Android 服務。
+
 ## 架構
 
 ```text
@@ -70,6 +89,10 @@ MainActivity → XuiService → nativeLibraryDir/libxui.so → libxray.so
 filesDir/server/{db,xray,log}
                   ↓
 Browser → http://127.0.0.1:2053/
+
+MainActivity → FrpService → nativeLibraryDir/libfrpc.so → external frps
+                  ↓
+filesDir/server/frp/{frpc.toml,support/}
 ```
 
 `XuiService` 使用 specialUse 類型的 Foreground Service（前景服務），按使用者指令啟停。
@@ -85,6 +108,18 @@ Browser → http://127.0.0.1:2053/
 ```
 
 裝置測試驗證原生程式執行、嵌入前端、Xray 子程序、面板登入、VLESS TCP 入站新增／監聽／刪除、背景面板、強制終止後清理、重啟、停止與資料庫檔案保留。
+frpc 轉發測試需要本機測試伺服器。在另一個終端執行以下指令，再跑上面的隔離裝置測試；未啟動此伺服器時，TCP／UDP 轉發項目會略過。測試伺服器僅監聽本機，使用建置產生的 `.core-cache/frps`；測試後以 Ctrl+C 停止，並移除這兩個測試轉送。
+
+```bash
+adb reverse tcp:17000 tcp:17000
+adb reverse tcp:18080 tcp:18080
+python3 scripts/frp-validation-server.py
+# 測試完成並停止伺服器後
+adb reverse --remove tcp:17000
+adb reverse --remove tcp:18080
+```
+
+frpc 裝置測試涵蓋 TCP／UDP 實際往返、斷線重連、獨立啟停、無效設定保留、支援檔案匯入，以及外部權杖指令與父程序死亡的群組清理；不等同於所有 frp 協定／外掛已逐一驗證。
 裝置測試請使用隔離套件與開發裝置；既有正式套件須先停止服務以釋放固定面板連接埠，測試不會移除正式套件資料。已執行項目與限制見[進度紀錄](../PROGRESS.md)。
 3x-ui 的 Go 型別依賴比 v26.6.27 核心新；新增協定或較新欄位不保證可用，須對實際設定逐項驗證。
 

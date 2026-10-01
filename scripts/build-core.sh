@@ -84,4 +84,5 @@ cp "$UPSTREAM/LICENSE" "$PROJECT_ROOT/app/src/main/assets/licenses/3x-ui/LICENSE
         go build -trimpath -buildmode=pie -ldflags='-s -w -checklinkname=0' \
         -o "$PROJECT_ROOT/app/src/main/jniLibs/arm64-v8a/libxui.so" .
 )
-echo "Built Android arm64 3x-ui v3.8.5 and Xray $XRAY_VERSION with Android network binding."
+"$PROJECT_ROOT/scripts/build-frpc.sh"
+echo "Built Android arm64 3x-ui v3.8.5, Xray $XRAY_VERSION with Android network binding, and frpc v0.71.0."
