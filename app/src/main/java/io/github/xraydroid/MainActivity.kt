@@ -14,6 +14,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.core.net.toUri
+import io.github.xraydroid.runtime.NetworkStore
 import io.github.xraydroid.runtime.ServerStore
 import io.github.xraydroid.runtime.XuiService
 import io.github.xraydroid.ui.ServerDashboard
@@ -34,12 +35,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pendingAction = savedInstanceState?.getString(PENDING_ACTION)
+        NetworkStore.initialize(applicationContext)
         enableEdgeToEdge()
         setContent {
             XrayDroidTheme {
                 val state by ServerStore.state.collectAsState()
+                val networkState by NetworkStore.state.collectAsState()
                 ServerDashboard(
                     state = state,
+                    networkState = networkState,
+                    onSelectNetwork = NetworkStore::select,
                     onStart = { dispatchWithNotificationPermission(XuiService.ACTION_START) },
                     onStop = { XuiService.dispatch(this, XuiService.ACTION_STOP) },
                     onRestart = { dispatchWithNotificationPermission(XuiService.ACTION_RESTART) },

@@ -10,7 +10,7 @@ android {
     compileSdk = 36
     buildToolsVersion = "36.0.0"
     defaultConfig {
-        applicationId = "io.github.xraydroid"
+        applicationId = providers.gradleProperty("validationApplicationId").getOrElse("io.github.xraydroid")
         minSdk = 26
         targetSdk = 36
         versionCode = 1

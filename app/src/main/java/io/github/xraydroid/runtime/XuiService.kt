@@ -27,6 +27,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -38,23 +40,52 @@ class XuiService : Service() {
     private val generation = AtomicLong()
     private val processLock = Any()
     private var activeTicket = 0L
-    private var activeStartId = 0
+
+    @Volatile private var activeStartId = 0
     private lateinit var layout: RuntimeLayout
 
     @Volatile private var process: java.lang.Process? = null
+
+    @Volatile private var desiredRunning = false
     private val paths: Set<String> get() = setOf(layout.xui.absolutePath, layout.xray.absolutePath)
 
     override fun onCreate() {
         super.onCreate()
         layout = RuntimeLayout(this)
+        NetworkStore.initialize(applicationContext)
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL, "本機伺服器", NotificationManager.IMPORTANCE_LOW)
         )
+        scope.launch {
+            NetworkStore.state.map { state ->
+                state.selectedMode to if (state.selectedMode == OutboundNetworkMode.SYSTEM) {
+                    0L
+                } else {
+                    state.selectedOption?.handle
+                }
+            }.distinctUntilChanged().collect {
+                val ticket = synchronized(processLock) {
+                    if (!desiredRunning) return@collect
+                    generation.incrementAndGet()
+                }
+                scope.launch {
+                    mutex.withLock {
+                        if (generation.get() != ticket || !desiredRunning) return@withLock
+                        activeTicket = ticket
+                        performAction(ticket, activeStartId, restart = true)
+                    }
+                }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: ACTION_START
-        val ticket = generation.incrementAndGet()
+        val ticket = synchronized(processLock) {
+            desiredRunning = action != ACTION_STOP
+            activeStartId = startId
+            generation.incrementAndGet()
+        }
         val notification = notification("正在準備本機服務")
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(
@@ -69,38 +100,70 @@ class XuiService : Service() {
             mutex.withLock {
                 if (generation.get() != ticket) return@withLock
                 activeTicket = ticket
-                activeStartId = startId
-                try {
-                    when (action) {
-                        ACTION_STOP -> stopServer()
-                        ACTION_RESTART -> {
-                            stopServer()
-                            startServer(ticket)
-                        }
-                        ACTION_START -> startServer(ticket)
-                    }
-                } catch (_: CancellationException) {
-                    stopServer()
-                } catch (error: Exception) {
-                    stopServer()
-                    ServerStore.log("Server startup failed: ${error.javaClass.simpleName}")
-                    ServerStore.transition(ServerPhase.ERROR, "服務啟動失敗，請確認核心檔案與連接埠後重試")
-                }
-                if (generation.get() == ticket && process == null) {
-                    finishService(ticket, startId)
-                }
+                performAction(ticket, startId, restart = action == ACTION_RESTART)
             }
         }
         return START_STICKY
     }
 
+    private suspend fun performAction(ticket: Long, startId: Int, restart: Boolean) {
+        try {
+            if (!desiredRunning) {
+                stopServer()
+            } else {
+                if (restart) stopServer()
+                startServer(ticket)
+            }
+        } catch (_: CancellationException) {
+            stopServer()
+        } catch (error: Exception) {
+            stopServer()
+            synchronized(processLock) {
+                if (generation.get() != ticket) return@synchronized
+                val latestNetwork = NetworkStore.state.value
+                if (desiredRunning && latestNetwork.selectedMode != OutboundNetworkMode.SYSTEM &&
+                    latestNetwork.selectedOption == null
+                ) {
+                    ServerStore.transition(ServerPhase.WAITING_FOR_NETWORK, "所選網路不可用，等待連線恢復")
+                    updateNotification("等待指定網路 · 不會改用其他網路")
+                } else {
+                    desiredRunning = false
+                    ServerStore.log("Server startup failed: ${error.javaClass.simpleName}")
+                    ServerStore.transition(ServerPhase.ERROR, "服務啟動失敗，請確認核心檔案與網路後重試")
+                }
+            }
+        }
+        if (generation.get() == ticket && process == null &&
+            ServerStore.state.value.phase != ServerPhase.WAITING_FOR_NETWORK
+        ) {
+            finishService(ticket, startId)
+        }
+    }
+
     private suspend fun startServer(ticket: Long) {
-        if (process?.isAlive == true) {
+        val existing = process
+        if (existing?.isAlive == true) {
+            monitor(existing, ticket, activeStartId)
             updateNotification("服務執行中 · 127.0.0.1:2053")
             return
         }
+        val networkState = NetworkStore.state.value
+        val mode = networkState.selectedMode
+        val option = networkState.selectedOption
+        if (mode != OutboundNetworkMode.SYSTEM && option == null) {
+            // 等待網路前清理上次 App 結束後可能殘留的同 UID 核心。
+            OwnedProcesses.terminate(paths)
+            delay(200)
+            OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
+            if (generation.get() != ticket) throw CancellationException()
+            ServerStore.transition(ServerPhase.WAITING_FOR_NETWORK, "所選網路不可用，等待連線恢復")
+            updateNotification("等待指定網路 · 不會改用其他網路")
+            return
+        }
+        val networkHandle = if (mode == OutboundNetworkMode.SYSTEM) 0L else checkNotNull(option).handle
         ServerStore.transition(ServerPhase.STARTING, "正在啟動 3x-ui 與 Xray")
         layout.prepare()
+        if (mode != OutboundNetworkMode.SYSTEM) probeNetworkBinding(networkHandle)
         OwnedProcesses.terminate(paths)
         delay(300)
         OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
@@ -110,7 +173,7 @@ class XuiService : Service() {
         }
         val child = synchronized(processLock) {
             if (generation.get() != ticket) throw CancellationException()
-            layout.builder().start().also { process = it }
+            layout.builder(networkHandle = networkHandle).start().also { process = it }
         }
         // 核心輸出可能包含登入資料；只顯示 App 自身的生命週期事件。
         scope.launch {
@@ -126,16 +189,44 @@ class XuiService : Service() {
         while (System.nanoTime() < deadline) {
             if (generation.get() != ticket) throw CancellationException()
             check(child.isAlive) { "3x-ui exited before panel readiness" }
-            if (panelReady()) {
-                ServerStore.transition(ServerPhase.RUNNING, "管理面板已就緒，服務持續於背景執行")
+            if (panelReady() && OwnedProcesses.isRunning(layout.xray.absolutePath)) {
+                if (generation.get() != ticket) throw CancellationException()
+                val networkLabel = when (mode) {
+                    OutboundNetworkMode.SYSTEM -> "跟隨系統"
+                    OutboundNetworkMode.WIFI -> "Wi-Fi · ${option?.interfaceName}"
+                    OutboundNetworkMode.CELLULAR -> "行動網路 · ${option?.interfaceName}"
+                    OutboundNetworkMode.ETHERNET -> "乙太網路 · ${option?.interfaceName}"
+                }
+                ServerStore.transition(ServerPhase.RUNNING, "管理面板與核心已就緒，服務持續於背景執行", networkLabel)
                 ServerStore.log("Panel is ready at 127.0.0.1:2053")
                 updateNotification("服務執行中 · 127.0.0.1:2053")
-                monitor(child)
+                monitor(child, ticket, activeStartId)
                 return
             }
             delay(250)
         }
         error("Panel readiness timed out")
+    }
+
+    private fun probeNetworkBinding(networkHandle: Long) {
+        val probe = layout.builder(networkHandle = networkHandle)
+            .command(layout.xray.absolutePath, "version")
+            .start()
+        // 只驗證退出狀態，不讀取或顯示核心輸出。
+        scope.launch {
+            runCatching {
+                probe.inputStream.use { input ->
+                    val buffer = ByteArray(4096)
+                    while (input.read(buffer) != -1) Unit
+                }
+            }
+        }
+        try {
+            check(probe.waitFor(5, TimeUnit.SECONDS)) { "Native network binding probe timed out" }
+            check(probe.exitValue() == 0) { "Native network binding probe failed" }
+        } finally {
+            if (probe.isAlive) probe.destroyForcibly()
+        }
     }
 
     private fun panelReady(): Boolean = runCatching {
@@ -152,16 +243,24 @@ class XuiService : Service() {
         }
     }.getOrDefault(false)
 
-    private fun monitor(child: java.lang.Process) {
+    private fun monitor(child: java.lang.Process, ticket: Long, startId: Int) {
         scope.launch {
             child.waitFor()
             mutex.withLock {
-                if (process !== child) return@withLock
-                process = null
+                val unexpectedExit = synchronized(processLock) {
+                    if (process !== child || generation.get() != ticket) {
+                        false
+                    } else {
+                        process = null
+                        desiredRunning = false
+                        true
+                    }
+                }
+                if (!unexpectedExit) return@withLock
                 OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
                 ServerStore.transition(ServerPhase.ERROR, "服務意外停止，請重新啟動")
                 ServerStore.log("3x-ui process exited unexpectedly")
-                finishService(activeTicket, activeStartId)
+                finishService(ticket, startId)
             }
         }
     }
@@ -221,7 +320,10 @@ class XuiService : Service() {
     }
 
     override fun onDestroy() {
-        generation.incrementAndGet()
+        synchronized(processLock) {
+            desiredRunning = false
+            generation.incrementAndGet()
+        }
         scope.cancel()
         synchronized(processLock) {
             process?.destroy()

@@ -52,6 +52,9 @@ class ServerLifecycleTest {
             assertEquals(ServerPhase.RUNNING, ServerStore.state.value.phase)
             assertTrue("Panel must survive background", isPanelReachable())
 
+            // 重複啟動指令仍須保留異常結束監控。
+            XuiService.dispatch(context, XuiService.ACTION_START)
+            SystemClock.sleep(500)
             val oldPanel = requireNotNull(ownedPid("$directory/libxui.so"))
             Os.kill(oldPanel, OsConstants.SIGKILL)
             awaitPhase(ServerPhase.ERROR)

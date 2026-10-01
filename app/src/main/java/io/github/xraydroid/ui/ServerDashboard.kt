@@ -43,11 +43,21 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.github.xraydroid.BuildConfig
+import io.github.xraydroid.runtime.NetworkState
+import io.github.xraydroid.runtime.OutboundNetworkMode
 import io.github.xraydroid.runtime.ServerPhase
 import io.github.xraydroid.runtime.ServerState
 
 @Composable
-fun ServerDashboard(state: ServerState, onStart: () -> Unit, onStop: () -> Unit, onRestart: () -> Unit, onOpenPanel: () -> Unit) {
+fun ServerDashboard(
+    state: ServerState,
+    networkState: NetworkState,
+    onSelectNetwork: (OutboundNetworkMode) -> Unit,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onRestart: () -> Unit,
+    onOpenPanel: () -> Unit
+) {
     var logsExpanded by rememberSaveable { mutableStateOf(false) }
     val running = state.phase == ServerPhase.RUNNING
     val busy = state.phase == ServerPhase.STARTING || state.phase == ServerPhase.STOPPING
@@ -72,6 +82,14 @@ fun ServerDashboard(state: ServerState, onStart: () -> Unit, onStop: () -> Unit,
                         onStart = onStart,
                         onStop = onStop,
                         onRestart = onRestart
+                    )
+                }
+                item {
+                    NetworkCard(
+                        state = networkState,
+                        appliedNetworkLabel = state.outboundNetworkLabel,
+                        enabled = !busy,
+                        onSelect = onSelectNetwork
                     )
                 }
                 item {
@@ -193,6 +211,7 @@ private fun StatusCard(state: ServerState, onStart: () -> Unit, onStop: () -> Un
     val running = state.phase == ServerPhase.RUNNING
     val busy = state.phase == ServerPhase.STARTING || state.phase == ServerPhase.STOPPING
     val failed = state.phase == ServerPhase.ERROR
+    val waiting = state.phase == ServerPhase.WAITING_FOR_NETWORK
     val container by animateColorAsState(
         targetValue = when {
             failed -> MaterialTheme.colorScheme.errorContainer
@@ -221,6 +240,7 @@ private fun StatusCard(state: ServerState, onStart: () -> Unit, onStop: () -> Un
             }
             Text(
                 text = when (state.phase) {
+                    ServerPhase.WAITING_FOR_NETWORK -> "等待指定網路"
                     ServerPhase.STOPPED -> "準備就緒"
                     ServerPhase.STARTING -> "正在啟動"
                     ServerPhase.RUNNING -> "服務運作中"
@@ -232,6 +252,7 @@ private fun StatusCard(state: ServerState, onStart: () -> Unit, onStop: () -> Un
             )
             Text(
                 text = when (state.phase) {
+                    ServerPhase.WAITING_FOR_NETWORK -> "所選網路目前無法使用，連線恢復後會繼續執行。"
                     ServerPhase.STOPPED -> "啟動 3x-ui 與 Xray，開始管理你的連線。"
                     ServerPhase.STARTING -> "正在準備核心與管理面板，請稍候。"
                     ServerPhase.RUNNING -> "3x-ui 已啟動。關閉此畫面後，服務仍會在背景運作。"
@@ -268,6 +289,12 @@ private fun StatusCard(state: ServerState, onStart: () -> Unit, onStop: () -> Un
                         shape = RoundedCornerShape(20.dp)
                     ) { Text("停止服務") }
                 }
+            } else if (waiting) {
+                Button(
+                    onClick = onStop,
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    shape = RoundedCornerShape(20.dp)
+                ) { Text("停止服務") }
             } else {
                 Button(
                     onClick = onStart,

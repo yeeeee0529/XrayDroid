@@ -6,6 +6,13 @@ import android.system.OsConstants
 import java.io.File
 
 internal object OwnedProcesses {
+    fun isRunning(path: String): Boolean = File("/proc").listFiles()?.any { directory ->
+        directory.name.toIntOrNull() != null && runCatching {
+            Os.stat(directory.path).st_uid == Process.myUid() &&
+                Os.readlink(File(directory, "exe").path).removeSuffix(" (deleted)") == path
+        }.getOrDefault(false)
+    } ?: false
+
     fun terminate(paths: Set<String>, signal: Int = OsConstants.SIGTERM) {
         File("/proc").listFiles()?.forEach { directory ->
             val pid = directory.name.toIntOrNull() ?: return@forEach

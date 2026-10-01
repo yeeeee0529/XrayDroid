@@ -70,7 +70,9 @@ internal class PanelManagementProbe {
     }
 
     private fun awaitListening(port: Int, expected: Boolean) {
-        val deadline = SystemClock.elapsedRealtime() + 10000
+        // 上游 AddInbound 的 RPC 未就緒時仍回報儲存成功，改由待重啟工作套用設定。
+        // internal/web/web.go 的 cadenceXrayRestart 為 30 秒，再保留 10 秒供核心重啟。
+        val deadline = SystemClock.elapsedRealtime() + 40000
         while (SystemClock.elapsedRealtime() < deadline) {
             if (listening(port) == expected) return
             SystemClock.sleep(100)

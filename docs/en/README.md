@@ -26,7 +26,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 Alternatively, set `sdk.dir` in `local.properties`. On macOS, the default NDK location is Homebrew's `/opt/homebrew/share/android-ndk`.
-The core script fetches official sources, verifies the 3x-ui commit and Xray release SHA256, applies the pinned Android patch, builds the real upstream frontend, and embeds it into the Go executable.
+The core script fetches official sources, verifies the 3x-ui commit and Xray release SHA256, applies pinned Android patches, and builds the upstream frontend and both Go executables. Xray is compiled from a pinned source commit; the official archive supplies geodata and licenses.
 Gradle does not download cores automatically and rejects APK packaging if required binaries/assets are missing.
 Material 3 is pinned to `1.5.0-alpha04` because stable `1.4.0` does not expose `MaterialExpressiveTheme`; upgrades require renewed native UI validation.
 The first build needs network access. `.tools/`, `.core-cache/`, `upstream/`, generated native executables, and geodata are excluded from Git.
@@ -43,6 +43,16 @@ The management panel is fixed at `http://127.0.0.1:2053/`. The Android patch for
 Panel port, path, TLS, and listening-address settings do not override this Android entry point; subscription and inbound servers retain their own settings.
 The native app shows only its own lifecycle events, avoiding exposure of potentially sensitive backend output.
 Core updates require a rebuilt APK; downloaded executables are never run from writable app data.
+
+## Outbound network
+
+The dashboard detects Wi-Fi, cellular, and Ethernet interfaces, IP addresses, DNS servers, and validation status. The selected mode persists across launches.
+
+- System default follows Android routing, including a system VPN.
+- A selected network binds Xray outbound sockets and system DNS to that network and may bypass a VPN. Cellular selection requests that Android keep the network available.
+- Changing the selection restarts both cores and disconnects current sessions. Losing a selected network pauses the service until it returns, without falling back to another network.
+
+Management-panel connections and inbound listeners retain their original routing. xicmp is unsupported with a selected network. Disabled radios, missing SIMs, and carrier restrictions can prevent cellular activation.
 
 ## Architecture
 
@@ -63,11 +73,11 @@ The upstream patch additionally protects against parent death; foreground servic
 
 ```bash
 ./gradlew :app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
-./gradlew :app:connectedDebugAndroidTest
+./gradlew -PvalidationApplicationId=io.github.xraydroid.validation :app:connectedDebugAndroidTest
 ```
 
 Device tests cover native executable launch, embedded frontend, Xray child execution, panel login, VLESS TCP inbound creation / listening / deletion, background access, forced panel death cleanup, restart, shutdown, and database file retention.
-Tests start and stop this application's server; use a development test device. Observed checks and limitations are recorded in [Progress](../PROGRESS.md).
+Use the isolated validation package on a development device. Stop the regular package service first to release the fixed panel port; its data is preserved. Observed checks and limitations are recorded in [Progress](../PROGRESS.md).
 The panel's Go types depend on a newer Xray revision than v26.6.27. New protocols or fields require configuration-specific compatibility validation.
 
 ## License and sources

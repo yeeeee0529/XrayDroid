@@ -4,7 +4,7 @@
 - Kotlin Android application using Compose Material 3 Expressive. Native UI controls an embedded server; the existing upstream web panel opens in a browser.
 - `app/src/main/java/io/github/xraydroid/runtime`: foreground service, executable/data layout, scoped process cleanup, observable state.
 - `scripts/build-core.sh`: reproducible arm64 core build; upstream v3.8.5 commit and Xray v26.6.27 hashes are pinned.
-- `patches/3x-ui-android.patch`: all upstream changes. `upstream/` is ignored and must never be staged as an embedded Git repository.
+- `patches/3x-ui-android.patch` and `patches/xray-android-network.patch`: all upstream changes. `upstream/` is ignored and must never be staged as an embedded Git repository.
 - Executables must remain in `nativeLibraryDir`; writable runtime data remains under `filesDir/server`.
 
 ## Conventions
@@ -17,7 +17,7 @@
 ## Validation
 - Build native cores before Gradle packaging.
 - Run `./gradlew :app:ktlintFormat`, then `:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug`.
-- Run `:app:connectedDebugAndroidTest` on an arm64 Android development device for lifecycle changes.
+- Run `:app:connectedDebugAndroidTest` with `-PvalidationApplicationId=io.github.xraydroid.validation` on an arm64 Android development device for lifecycle changes. Stop the regular package service to release port 2053; preserve its data.
 - Upstream Go changes require formatting, relevant tests, cross-compilation, and one full Go test suite before a commit.
 - Record actual results and unverified cases in `docs/PROGRESS.md`; never claim build or runtime success without observed evidence.
 - Do not commit incomplete or unverified work. Do not push without a configured authorized remote.

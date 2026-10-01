@@ -35,12 +35,15 @@ class RuntimeLayout(private val context: Context) {
         marker.writeText(currentVersion)
     }
 
-    fun builder(vararg arguments: String): ProcessBuilder = ProcessBuilder(listOf(xui.absolutePath) + arguments).apply {
+    fun builder(vararg arguments: String, networkHandle: Long = 0L): ProcessBuilder = ProcessBuilder(
+        listOf(xui.absolutePath) + arguments
+    ).apply {
         directory(root)
         redirectErrorStream(true)
         environment().putAll(
             mapOf(
                 "XUI_XRAY_BINARY" to xray.absolutePath,
+                "XRAY_ANDROID_NETWORK_HANDLE" to java.lang.Long.toUnsignedString(networkHandle),
                 "XUI_BIN_FOLDER" to xrayData.absolutePath,
                 "XUI_DB_FOLDER" to database.absolutePath,
                 "XUI_LOG_FOLDER" to logs.absolutePath,

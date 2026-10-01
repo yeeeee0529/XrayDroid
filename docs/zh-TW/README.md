@@ -26,7 +26,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 也可用 `local.properties` 的 `sdk.dir` 指向 SDK。macOS 的 NDK 預設位置是 Homebrew 安裝路徑 `/opt/homebrew/share/android-ndk`。
-建置腳本下載官方來源、驗證 3x-ui commit 與 Xray 發行檔 SHA256，套用版本固定的修補，實際 build 上游前端後嵌入 Go 執行檔。
+建置腳本下載官方來源、驗證 3x-ui commit 與 Xray 發行檔 SHA256，套用版本固定的修補，實際 build 上游前端與兩個 Go 執行檔。Xray 由固定 commit 原始碼編譯，官方發行檔提供地理資料與授權。
 Gradle 不會自動下載核心；缺少核心檔案時會明確拒絕包裝 APK。
 Material 3 固定使用 `1.5.0-alpha04`，因穩定版 `1.4.0` 尚未公開 `MaterialExpressiveTheme`；升級時需重新驗證原生介面。
 首次建置需要網路。`.tools/`、`.core-cache/`、`upstream/`、原生核心與產生的資產不加入 Git。
@@ -43,6 +43,16 @@ Material 3 固定使用 `1.5.0-alpha04`，因穩定版 `1.4.0` 尚未公開 `Mat
 面板中的連接埠、路徑、TLS 或監聽位址設定不會覆蓋 Android 的固定入口；訂閱伺服器與入站仍依各自設定運作。
 App 僅顯示自身生命週期日誌，避免將核心輸出可能包含的登入資料顯示於原生介面。
 核心更新需重新 build 並安裝 APK；不從可寫資料目錄執行下載的程式。
+
+## 出站網路
+
+首頁偵測 Wi-Fi、行動網路與乙太網路，列出介面名稱、IP、DNS 伺服器與連線驗證狀態。選擇會儲存並於下次啟動沿用。
+
+- 跟隨系統：沿用 Android 預設路由，包括系統 VPN。
+- 指定網路：將 Xray 出站通訊端與系統 DNS 綁定該網路；可能繞過系統 VPN。選擇行動網路時會向 Android 請求保持該網路可用。
+- 服務執行中切換會重啟 3x-ui 與 Xray，現有連線會中斷。指定網路消失時服務進入等待，恢復後重新啟動；不自動回退至其他網路。
+
+管理面板與入站監聽保持原本路由。手動選網路時不支援 xicmp。無線電關閉、無 SIM 或電信限制可能使行動網路無法啟用。
 
 ## 架構
 
@@ -63,11 +73,11 @@ Browser → http://127.0.0.1:2053/
 
 ```bash
 ./gradlew :app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
-./gradlew :app:connectedDebugAndroidTest
+./gradlew -PvalidationApplicationId=io.github.xraydroid.validation :app:connectedDebugAndroidTest
 ```
 
 裝置測試驗證原生程式執行、嵌入前端、Xray 子程序、面板登入、VLESS TCP 入站新增／監聽／刪除、背景面板、強制終止後清理、重啟、停止與資料庫檔案保留。
-測試會啟停本 App 服務，請使用開發測試裝置。已執行項目與限制見[進度紀錄](../PROGRESS.md)。
+裝置測試請使用隔離套件與開發裝置；既有正式套件須先停止服務以釋放固定面板連接埠，測試不會移除正式套件資料。已執行項目與限制見[進度紀錄](../PROGRESS.md)。
 3x-ui 的 Go 型別依賴比 v26.6.27 核心新；新增協定或較新欄位不保證可用，須對實際設定逐項驗證。
 
 ## 授權與來源
