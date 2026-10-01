@@ -1,14 +1,41 @@
-.gradle/
-.kotlin/
+# 本機工具、IDE 與建置快取。
+**/.gradle/
+**/.kotlin/
 .tools/
 .idea/
 local.properties
 **/build/
+**/.cxx/
+**/.externalNativeBuild/
+*.iml
+.DS_Store
+
+# 可重建的上游來源、核心、資產與知識圖譜。
 upstream/
 app/src/main/jniLibs/
 app/src/main/assets/core/
-*.iml
-.DS_Store
 .codebase-memory/
 .core-cache/
+
+# 產生的套件、日誌與除錯資料。
+*.apk
+*.aab
+*.apks
+*.log
+*.hprof
+*.heapdump
 **/__pycache__/
+*.py[cod]
+
+# 本機環境與簽署憑證；範例設定可加入版本控制。
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.jks
+*.keystore
+*.p12
+*.pfx
+keystore.properties
+signing.properties

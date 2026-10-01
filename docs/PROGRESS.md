@@ -6,6 +6,13 @@
 
 [專案首頁](../README.md) · [繁體中文](zh-TW/README.md) · [English](en/README.md)
 
+## Git 忽略規則與 GitHub 遠端
+
+- 依使用者指示將 `origin` 設定為 `https://github.com/yeeeee0529/XrayDroid.git`；首次發布前 `git ls-remote` 成功，遠端尚無分支。先前紀錄中的「未設定 remote」為當時狀態。
+- `.gitignore` 整理為本機工具／快取、可重建來源與核心、產生的套件與除錯資料、本機環境與簽署憑證。補上巢狀 Gradle／Kotlin／NDK 快取、APK／AAB、日誌、記憶體傾印、Python 編譯檔、`.env` 與常用簽署檔案；保留 `.env.example`／`.env.sample`／`.env.template`。
+- `git check-ignore` 驗證 23 個應忽略路徑與 9 個應保留路徑通過，包含 Gradle wrapper、授權資產、來源與 Android 修補；現有 tracked 檔案不需移除。歷史物件僅查詢名稱／型別／大小，沒有 50 MiB 以上 blob；未讀取環境設定或憑證內容。
+- 本次僅修改 `.gitignore` 與進度紀錄，`git diff --check` 通過；程式與核心未變動，沿用前輪已觀察的 lint、6 項 JVM test、9 項真機通過／1 項行動網路略過及正式 APK 驗證，不重跑應用程式 suite。
+
 ## 完整 frpc 用戶端與獨立設定子頁
 
 - 整合官方 frpc v0.71.0，固定 commit `4a23aa181c1d7e28eecaa8216024ed753b9d27c8`；手機只執行 frpc，用戶提供外部 frps。設定索引分開「出站網路」與「frp」，子頁返回設定，再返回首頁。
