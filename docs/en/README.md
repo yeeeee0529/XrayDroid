@@ -44,6 +44,8 @@ Panel port, path, TLS, and listening-address settings do not override this Andro
 The native app shows only its own lifecycle events, avoiding exposure of potentially sensitive backend output.
 Core updates require a rebuilt APK; downloaded executables are never run from writable app data.
 
+The panel reports capacity and usage of the filesystem containing the app’s private data, rather than the Android root filesystem. These figures describe the entire filesystem, not the app’s own storage footprint.
+
 ## Outbound network
 
 Open Settings from the dashboard to configure outbound networks; the return button or Android Back gesture returns home. The settings page lists individual app-visible interfaces, such as `wlan0` and `tun1`, with IP addresses, DNS servers, status, and a refresh action. Names reflect existing device interfaces; the app does not create them.

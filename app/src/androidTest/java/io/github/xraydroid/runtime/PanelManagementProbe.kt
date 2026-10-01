@@ -1,5 +1,7 @@
 package io.github.xraydroid.runtime
 
+import android.content.Context
+import android.os.StatFs
 import android.os.SystemClock
 import java.net.CookieManager
 import java.net.CookiePolicy
@@ -10,16 +12,21 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
 import org.json.JSONObject
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 
 internal class PanelManagementProbe {
     private val cookies = CookieManager(null, CookiePolicy.ACCEPT_ALL)
     private var csrf = ""
 
-    fun verifyLoginAndVlessInbound() {
+    fun verifyLoginAndVlessInbound(context: Context) {
         csrf = request("/csrf-token").getString("obj")
         request("/login", JSONObject().put("username", "admin").put("password", "admin"))
         csrf = request("/csrf-token").getString("obj")
+        val disk = awaitDiskStatus()
+        val filesystem = StatFs(context.filesDir.path)
+        assertEquals("Panel disk capacity must match app data filesystem", filesystem.totalBytes, disk.getLong("total"))
+        assertTrue("Panel disk usage must be within capacity", disk.getLong("current") in 0..filesystem.totalBytes)
         val port = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
         val inbound = JSONObject()
             .put("remark", "android-e2e")
@@ -39,6 +46,17 @@ internal class PanelManagementProbe {
             request("/panel/api/inbounds/del/$id", JSONObject())
         }
         awaitListening(port, false)
+    }
+
+    private fun awaitDiskStatus(): JSONObject {
+        // 面板 HTTP 就緒時，第一筆背景統計可能尚未完成。
+        val deadline = SystemClock.elapsedRealtime() + 10000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val status = request("/panel/api/server/status").optJSONObject("obj")
+            if (status != null) return status.getJSONObject("disk")
+            SystemClock.sleep(100)
+        }
+        throw AssertionError("Panel did not publish storage statistics")
     }
 
     private fun request(path: String, body: JSONObject? = null): JSONObject {

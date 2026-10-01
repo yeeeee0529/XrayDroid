@@ -45,7 +45,7 @@ class ServerLifecycleTest {
                 ownedPid("$directory/libxray.so") != null
             )
             assertTrue(File(context.filesDir, "server/db/x-ui.db").isFile)
-            PanelManagementProbe().verifyLoginAndVlessInbound()
+            PanelManagementProbe().verifyLoginAndVlessInbound(context)
 
             instrumentation.uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME").close()
             SystemClock.sleep(2000)

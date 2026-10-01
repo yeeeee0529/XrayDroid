@@ -41,10 +41,34 @@ index 0e2a9fa..357e244 100644
  	if !acquireUpdateSlot(runID) {
  		return 0, fmt.Errorf("a panel update is already in progress")
 diff --git a/internal/web/service/server.go b/internal/web/service/server.go
-index 09a9e25..876f943 100644
+index 09a9e25..5d8e373 100644
 --- a/internal/web/service/server.go
 +++ b/internal/web/service/server.go
-@@ -1025,6 +1025,9 @@ func parseXrayDigestSHA256(dgst []byte) (string, error) {
+@@ -459,6 +459,14 @@ func (s *ServerService) resolvePublicIPs() {
+ 	}
+ }
+ 
++// Android 根分割區不代表 App 可寫空間，改查資料庫所在的檔案系統。
++func diskUsagePath(platform string) string {
++	if platform == "android" {
++		return config.GetDBFolderPath()
++	}
++	return "/"
++}
++
+ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
+ 	now := time.Now()
+ 	status := &Status{
+@@ -532,7 +540,7 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
+ 	}
+ 
+ 	// Disk stats
+-	diskInfo, err := disk.Usage("/")
++	diskInfo, err := disk.Usage(diskUsagePath(runtime.GOOS))
+ 	if err != nil {
+ 		logger.Warning("get disk usage failed:", err)
+ 	} else {
+@@ -1025,6 +1033,9 @@ func parseXrayDigestSHA256(dgst []byte) (string, error) {
  }
  
  func (s *ServerService) UpdateXray(version string) error {
@@ -248,3 +272,36 @@ index 8b9eb0d..d16261b 100644
  }
 +
 +func prepareChildLifetime(_ *exec.Cmd) {}
+diff --git a/internal/web/service/server_disk_path_test.go b/internal/web/service/server_disk_path_test.go
+new file mode 100644
+index 0000000..b6a3705
+--- /dev/null
++++ b/internal/web/service/server_disk_path_test.go
+@@ -0,0 +1,27 @@
++package service
++
++import (
++	"testing"
++
++	"github.com/shirou/gopsutil/v4/disk"
++)
++
++func TestDiskUsagePath(t *testing.T) {
++	directory := t.TempDir()
++	t.Setenv("XUI_DB_FOLDER", directory)
++	if got := diskUsagePath("android"); got != directory {
++		t.Fatalf("Android disk path = %q, want %q", got, directory)
++	}
++	info, err := disk.Usage(diskUsagePath("android"))
++	if err != nil {
++		t.Fatalf("Query app data filesystem: %v", err)
++	}
++	if info.Total == 0 {
++		t.Fatal("App data filesystem must report a nonzero capacity")
++	}
++	for _, platform := range []string{"linux", "darwin", "windows"} {
++		if got := diskUsagePath(platform); got != "/" {
++			t.Errorf("%s disk path = %q, want root", platform, got)
++		}
++	}
++}

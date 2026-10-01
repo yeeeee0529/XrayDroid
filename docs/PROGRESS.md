@@ -6,6 +6,20 @@
 
 [專案首頁](../README.md) · [繁體中文](zh-TW/README.md) · [English](en/README.md)
 
+## Android 儲存統計修正
+
+- 根因：上游 `ServerService.GetStatus` 固定使用 `disk.Usage("/")`，讀到 Android 根分割區。真機 `adb shell df -h / /data` 顯示根分割區約 906 MB／903 MB，而資料分割區約 229 GB／87 GB、可用 141 GB；截圖的 99.7% 不代表 App 資料空間已滿。
+- `patches/3x-ui-android.patch` 改為僅在 Android 使用 `config.GetDBFolderPath()`，即 App 注入的 `XUI_DB_FOLDER`；其他平台保留根目錄統計。數值代表資料所在整個檔案系統的容量與使用量，不是 App 自身佔用大小；不變更資料庫或設定。
+- 加入 Go 路徑回歸 test；Android `PanelManagementProbe` 登入後等待首次統計，將面板的 `disk.total` 與 `StatFs(context.filesDir.path).totalBytes` 精確比對。三份 README 與 CHANGELOG 已同步。
+- `gofmt`、`git diff --check`、修補反向套用檢查、`go test ./internal/web/service -run '^TestDiskUsagePath$' -count=1`、`go vet ./internal/web/service`：通過。
+- 完整 3x-ui `go test ./...` 已執行一次：除既有上游 Discord `TestGatewayRequestedHeartbeatDoesNotRaceTicker` 遇到 `connection reset by peer` 外，其餘套件通過，含本次修改的 service 套件。該失敗 test 單獨 `-count=5` 重跑全部通過；完整 suite 不記為全數通過，未修改無關的 Discord 實作。
+- `GOCACHE="$PWD/.core-cache/go-build" ./scripts/build-core.sh` 通過，包含官方資產驗證、Xray 模組驗證、前端 build 與兩個 Android arm64 核心編譯；兩個核心的 ELF LOAD 段均為 16 KB 對齊。第一次使用預設 Go 快取因 sandbox 權限失敗；改用專案快取後成功，仍有非致命模組版本快取寫入警告。
+- Gradle `:app:ktlintFormat :app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug`：通過；6 個 JVM test 通過，Android lint 無 issues。Kotlin 主程式與裝置 test 編譯通過。Gradle 本機鎖定通訊端需在 sandbox 外執行。
+- 隔離真機 suite 使用 `-PvalidationApplicationId=io.github.xraydroid.validation`。首輪新增統計 test 因背景首次取樣尚未完成而讀到空值；已改為等待發布。首輪既有導覽 test 亦逾時，手機未鎖定；未改動導覽實作。最終完整 suite 在 Pixel 9 Pro XL／Android 17：7 項，6 通過、1 行動網路不可用 skipped、0 failures、0 errors。容量精確比對、登入／VLESS 入站、背景、崩潰清理、重啟、停止、網路切換與導覽均通過。
+- 未覆寫 application ID 的正式 APK 重新 build 通過，`adb install -r` 更新成功並保留使用者資料；正式 App 已開啟並恢復服務，原生首頁實際顯示「服務運作中」。APK：`app/build/outputs/apk/debug/app-debug.apk`。
+- 尚未逐一驗證其他 Android／OEM 的儲存檔案系統；未擷取網頁儲存卡片視覺截圖。這次驗證使用真實 App UID 的面板 API 與 Android StatFs，比 shell 容量查詢更直接。
+- 本次完成後 commit；本專案未設定 remote，不 push。
+
 ## 設定頁與逐介面選擇交接
 
 本次完成：加入 M3E 設定頁，將出站網路移到設定頁，獨立顯示 App 可見的 VPN／虛擬介面。基底 commit 為 `6a2bfff`；本次使用 Conventional Commit（慣例提交）訊息 `feat: add settings and per-interface network selection`。
