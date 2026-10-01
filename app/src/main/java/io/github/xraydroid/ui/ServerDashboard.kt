@@ -1,6 +1,7 @@
 package io.github.xraydroid.ui
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
@@ -62,12 +64,6 @@ fun ServerDashboard(state: ServerState, onStart: () -> Unit, onStop: () -> Unit,
                 item {
                     Column(modifier = Modifier.padding(top = 12.dp, bottom = 8.dp)) {
                         Text("XrayDroid", style = MaterialTheme.typography.headlineLarge)
-                        Text(
-                            "你的 3x-ui，隨身運作",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
                     }
                 }
                 item {
@@ -261,6 +257,8 @@ private fun StatusCard(state: ServerState, onStart: () -> Unit, onStop: () -> Un
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedButton(
                         onClick = onRestart,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = contentColor),
+                        border = BorderStroke(1.dp, contentColor),
                         modifier = Modifier.weight(1f).height(56.dp),
                         shape = RoundedCornerShape(20.dp)
                     ) { Text("重新啟動") }

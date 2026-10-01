@@ -2,6 +2,8 @@
 
 日期：2026-10-01。
 
+首頁顯示修正：移除副標題，重新啟動按鈕改用狀態卡對應前景色與外框；Kotlin 編譯、ktlint 與 lint、APK build 通過。此次為純顯示變更，未新增測試；真機視覺複查仍受裝置鎖定限制。
+
 [專案首頁](../README.md) · [繁體中文](zh-TW/README.md) · [English](en/README.md)
 
 ## 已實作
