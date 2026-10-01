@@ -8,16 +8,21 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.core.net.toUri
 import io.github.xraydroid.runtime.NetworkStore
 import io.github.xraydroid.runtime.ServerStore
 import io.github.xraydroid.runtime.XuiService
 import io.github.xraydroid.ui.ServerDashboard
+import io.github.xraydroid.ui.SettingsScreen
 import io.github.xraydroid.ui.theme.XrayDroidTheme
 
 class MainActivity : ComponentActivity() {
@@ -41,15 +46,27 @@ class MainActivity : ComponentActivity() {
             XrayDroidTheme {
                 val state by ServerStore.state.collectAsState()
                 val networkState by NetworkStore.state.collectAsState()
-                ServerDashboard(
-                    state = state,
-                    networkState = networkState,
-                    onSelectNetwork = NetworkStore::select,
-                    onStart = { dispatchWithNotificationPermission(XuiService.ACTION_START) },
-                    onStop = { XuiService.dispatch(this, XuiService.ACTION_STOP) },
-                    onRestart = { dispatchWithNotificationPermission(XuiService.ACTION_RESTART) },
-                    onOpenPanel = { openPanel(state.panelUrl) }
-                )
+                var settingsVisible by rememberSaveable { mutableStateOf(false) }
+                BackHandler(enabled = settingsVisible) { settingsVisible = false }
+                if (settingsVisible) {
+                    SettingsScreen(
+                        serverState = state,
+                        networkState = networkState,
+                        onBack = { settingsVisible = false },
+                        onSelectNetwork = NetworkStore::select,
+                        onSelectInterface = NetworkStore::selectInterface,
+                        onRefreshInterfaces = NetworkStore::refreshInterfaces
+                    )
+                } else {
+                    ServerDashboard(
+                        state = state,
+                        onOpenSettings = { settingsVisible = true },
+                        onStart = { dispatchWithNotificationPermission(XuiService.ACTION_START) },
+                        onStop = { XuiService.dispatch(this, XuiService.ACTION_STOP) },
+                        onRestart = { dispatchWithNotificationPermission(XuiService.ACTION_RESTART) },
+                        onOpenPanel = { openPanel(state.panelUrl) }
+                    )
+                }
             }
         }
     }

@@ -38,21 +38,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.github.xraydroid.BuildConfig
-import io.github.xraydroid.runtime.NetworkState
-import io.github.xraydroid.runtime.OutboundNetworkMode
 import io.github.xraydroid.runtime.ServerPhase
 import io.github.xraydroid.runtime.ServerState
 
 @Composable
 fun ServerDashboard(
     state: ServerState,
-    networkState: NetworkState,
-    onSelectNetwork: (OutboundNetworkMode) -> Unit,
+    onOpenSettings: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onRestart: () -> Unit,
@@ -72,8 +70,16 @@ fun ServerDashboard(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp)
             ) {
                 item {
-                    Column(modifier = Modifier.padding(top = 12.dp, bottom = 8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text("XrayDroid", style = MaterialTheme.typography.headlineLarge)
+                        TextButton(
+                            onClick = onOpenSettings,
+                            modifier = Modifier.semantics { contentDescription = "設定" }
+                        ) { Text("設定") }
                     }
                 }
                 item {
@@ -82,14 +88,6 @@ fun ServerDashboard(
                         onStart = onStart,
                         onStop = onStop,
                         onRestart = onRestart
-                    )
-                }
-                item {
-                    NetworkCard(
-                        state = networkState,
-                        appliedNetworkLabel = state.outboundNetworkLabel,
-                        enabled = !busy,
-                        onSelect = onSelectNetwork
                     )
                 }
                 item {
@@ -261,6 +259,9 @@ private fun StatusCard(state: ServerState, onStart: () -> Unit, onStop: () -> Un
                 },
                 style = MaterialTheme.typography.bodyLarge
             )
+            state.outboundNetworkLabel?.let { label ->
+                Text("出站網路：$label", style = MaterialTheme.typography.labelLarge)
+            }
             if (busy) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = contentColor)
             }

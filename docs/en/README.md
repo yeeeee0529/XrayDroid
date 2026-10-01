@@ -46,11 +46,17 @@ Core updates require a rebuilt APK; downloaded executables are never run from wr
 
 ## Outbound network
 
-The dashboard detects Wi-Fi, cellular, and Ethernet interfaces, IP addresses, DNS servers, and validation status. The selected mode persists across launches.
+Open Settings from the dashboard to configure outbound networks; the return button or Android Back gesture returns home. The settings page lists individual app-visible interfaces, such as `wlan0` and `tun1`, with IP addresses, DNS servers, status, and a refresh action. Names reflect existing device interfaces; the app does not create them.
+
+Selection persists by interface name and resolves the current Android network handle after reconnecting. A missing selected interface remains selected and waits for recovery, without switching to another interface of the same type. Existing transport-mode preferences remain supported.
+
+VPN interfaces appear separately from the system default. Interfaces without an available Android Network, down interfaces, and loopback interfaces display a reason and cannot be selected. Android may hide interfaces owned by other users or restricted to other apps, so detection cannot guarantee every virtual interface. Native binding failures also prevent fallback; refresh or select another interface.
 
 - System default follows Android routing, including a system VPN.
-- A selected network binds Xray outbound sockets and system DNS to that network and may bypass a VPN. Cellular selection requests that Android keep the network available.
+- A selected network binds Xray outbound sockets and system DNS to the Android network associated with that interface and may bypass a VPN. Cellular selection requests that Android keep the network available.
 - Changing the selection restarts both cores and disconnects current sessions. Losing a selected network pauses the service until it returns, without falling back to another network.
+
+Selecting an interface binds its associated Android network; Android chooses the underlying route. CLAT and other child interfaces without a public API network association are listed for information only. The app does not use hidden APIs or infer associations from interface names.
 
 Management-panel connections and inbound listeners retain their original routing. xicmp is unsupported with a selected network. Disabled radios, missing SIMs, and carrier restrictions can prevent cellular activation.
 

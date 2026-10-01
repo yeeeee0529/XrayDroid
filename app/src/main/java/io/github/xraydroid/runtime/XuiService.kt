@@ -58,11 +58,11 @@ class XuiService : Service() {
         )
         scope.launch {
             NetworkStore.state.map { state ->
-                state.selectedMode to if (state.selectedMode == OutboundNetworkMode.SYSTEM) {
-                    0L
-                } else {
-                    state.selectedOption?.handle
-                }
+                Triple(
+                    state.selectedMode,
+                    state.selectedInterfaceName,
+                    if (state.followsSystem()) 0L else state.selectedOption?.handle
+                )
             }.distinctUntilChanged().collect {
                 val ticket = synchronized(processLock) {
                     if (!desiredRunning) return@collect
@@ -121,7 +121,7 @@ class XuiService : Service() {
             synchronized(processLock) {
                 if (generation.get() != ticket) return@synchronized
                 val latestNetwork = NetworkStore.state.value
-                if (desiredRunning && latestNetwork.selectedMode != OutboundNetworkMode.SYSTEM &&
+                if (desiredRunning && !latestNetwork.followsSystem() &&
                     latestNetwork.selectedOption == null
                 ) {
                     ServerStore.transition(ServerPhase.WAITING_FOR_NETWORK, "所選網路不可用，等待連線恢復")
@@ -148,9 +148,8 @@ class XuiService : Service() {
             return
         }
         val networkState = NetworkStore.state.value
-        val mode = networkState.selectedMode
         val option = networkState.selectedOption
-        if (mode != OutboundNetworkMode.SYSTEM && option == null) {
+        if (!networkState.followsSystem() && option == null) {
             // 等待網路前清理上次 App 結束後可能殘留的同 UID 核心。
             OwnedProcesses.terminate(paths)
             delay(200)
@@ -160,10 +159,19 @@ class XuiService : Service() {
             updateNotification("等待指定網路 · 不會改用其他網路")
             return
         }
-        val networkHandle = if (mode == OutboundNetworkMode.SYSTEM) 0L else checkNotNull(option).handle
+        val networkHandle = if (networkState.followsSystem()) 0L else checkNotNull(option).handle
         ServerStore.transition(ServerPhase.STARTING, "正在啟動 3x-ui 與 Xray")
         layout.prepare()
-        if (mode != OutboundNetworkMode.SYSTEM) probeNetworkBinding(networkHandle)
+        if (!networkState.followsSystem()) {
+            try {
+                probeNetworkBinding(networkHandle)
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) {
+                    NetworkStore.reportBindingFailure(checkNotNull(option).interfaceName, networkHandle)
+                }
+                throw error
+            }
+        }
         OwnedProcesses.terminate(paths)
         delay(300)
         OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
@@ -191,11 +199,14 @@ class XuiService : Service() {
             check(child.isAlive) { "3x-ui exited before panel readiness" }
             if (panelReady() && OwnedProcesses.isRunning(layout.xray.absolutePath)) {
                 if (generation.get() != ticket) throw CancellationException()
-                val networkLabel = when (mode) {
+                val appliedMode = if (networkState.followsSystem()) OutboundNetworkMode.SYSTEM else checkNotNull(option).mode
+                val networkLabel = when (appliedMode) {
                     OutboundNetworkMode.SYSTEM -> "跟隨系統"
                     OutboundNetworkMode.WIFI -> "Wi-Fi · ${option?.interfaceName}"
                     OutboundNetworkMode.CELLULAR -> "行動網路 · ${option?.interfaceName}"
                     OutboundNetworkMode.ETHERNET -> "乙太網路 · ${option?.interfaceName}"
+                    OutboundNetworkMode.VPN -> "VPN · ${option?.interfaceName}"
+                    OutboundNetworkMode.OTHER -> "網路介面 · ${option?.interfaceName}"
                 }
                 ServerStore.transition(ServerPhase.RUNNING, "管理面板與核心已就緒，服務持續於背景執行", networkLabel)
                 ServerStore.log("Panel is ready at 127.0.0.1:2053")
@@ -228,6 +239,8 @@ class XuiService : Service() {
             if (probe.isAlive) probe.destroyForcibly()
         }
     }
+
+    private fun NetworkState.followsSystem(): Boolean = selectedMode == OutboundNetworkMode.SYSTEM && selectedInterfaceName == null
 
     private fun panelReady(): Boolean = runCatching {
         val connection = URL(

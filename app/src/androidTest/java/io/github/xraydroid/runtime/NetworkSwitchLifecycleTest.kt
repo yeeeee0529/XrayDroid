@@ -16,6 +16,75 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class NetworkSwitchLifecycleTest {
     @Test
+    fun exactInterfaceSelectionWaitsWhenMissingAndRecoversWithoutFallback() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".validation")) {
+            "Lifecycle verification requires an isolated validation application ID"
+        }
+        context.startActivity(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+        instrumentation.runOnMainSync { NetworkStore.initialize(context) }
+        awaitInitialWifiSnapshot()
+        val option = NetworkStore.state.value.options.firstOrNull { it.mode == OutboundNetworkMode.WIFI }
+        assumeTrue("Available Wi-Fi interface is required for exact interface verification", option != null)
+        val interfaceName = requireNotNull(option).interfaceName
+        val panelPath = "${context.applicationInfo.nativeLibraryDir}/libxui.so"
+        val xrayPath = "${context.applicationInfo.nativeLibraryDir}/libxray.so"
+        fun selectInterface(name: String) = instrumentation.runOnMainSync { NetworkStore.selectInterface(name) }
+        fun selectSystem() = instrumentation.runOnMainSync { NetworkStore.select(OutboundNetworkMode.SYSTEM) }
+
+        try {
+            selectInterface(interfaceName)
+            assertEquals(interfaceName, NetworkStore.state.value.selectedInterfaceName)
+            XuiService.dispatch(context, XuiService.ACTION_START)
+            awaitCondition("Explicitly selected interface must start the requested service") {
+                ServerStore.state.value.phase == ServerPhase.RUNNING &&
+                    ownedPid(panelPath) != null && ownedPid(xrayPath) != null
+            }
+            val originalCore = requireNotNull(ownedPid(xrayPath))
+            assertTrue(
+                "Applied interface label must identify the selected interface",
+                ServerStore.state.value.outboundNetworkLabel?.contains(interfaceName) == true
+            )
+
+            val missingName = "xraydroid-test-unavailable"
+            assumeTrue("Test interface name must be unavailable", NetworkStore.state.value.options.none { it.interfaceName == missingName })
+            selectInterface(missingName)
+            assertEquals(missingName, NetworkStore.state.value.selectedInterfaceName)
+            awaitCondition("Missing explicit interface must stop the core instead of falling back") {
+                ServerStore.state.value.phase == ServerPhase.WAITING_FOR_NETWORK &&
+                    ownedPid(panelPath) == null && ownedPid(xrayPath) == null
+            }
+            selectInterface(interfaceName)
+            awaitCondition("Restoring an available interface must recover the requested service") {
+                ServerStore.state.value.phase == ServerPhase.RUNNING &&
+                    ownedPid(panelPath) != null && ownedPid(xrayPath)?.let { it != originalCore } == true
+            }
+            assertEquals(interfaceName, NetworkStore.state.value.selectedInterfaceName)
+
+            XuiService.dispatch(context, XuiService.ACTION_STOP)
+            awaitCondition("Stop must release owned processes before changing selection") {
+                ServerStore.state.value.phase == ServerPhase.STOPPED &&
+                    ownedPid(panelPath) == null && ownedPid(xrayPath) == null
+            }
+            selectInterface(missingName)
+            selectInterface(interfaceName)
+            SystemClock.sleep(2000)
+            assertEquals("Interface selection after Stop must not restart the service", ServerPhase.STOPPED, ServerStore.state.value.phase)
+            assertTrue("Stopped service must not recreate the core", ownedPid(xrayPath) == null)
+        } finally {
+            XuiService.dispatch(context, XuiService.ACTION_STOP)
+            awaitCondition("Final cleanup must stop the validation service") {
+                ServerStore.state.value.phase == ServerPhase.STOPPED &&
+                    ownedPid(panelPath) == null && ownedPid(xrayPath) == null
+            }
+            selectSystem()
+        }
+    }
+
+    @Test
     fun selectionRestartsCoreAndUnavailableNetworkStopsItUntilRecovery() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -26,6 +95,7 @@ class NetworkSwitchLifecycleTest {
             Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
         instrumentation.runOnMainSync { NetworkStore.initialize(context) }
+        awaitInitialWifiSnapshot()
         val state = NetworkStore.state.value
         assumeTrue("Wi-Fi is required for network switching verification", state.options.any { it.mode == OutboundNetworkMode.WIFI })
         assumeTrue(
@@ -103,6 +173,15 @@ class NetworkSwitchLifecycleTest {
                     ownedPid(panelPath) == null && ownedPid(xrayPath) == null
             }
             select(OutboundNetworkMode.SYSTEM)
+        }
+    }
+
+    private fun awaitInitialWifiSnapshot() {
+        // 網路介面快照在 IO 執行緒建立，避免尚未公布結果就將測試誤判為略過。
+        val deadline = SystemClock.elapsedRealtime() + 5000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (NetworkStore.state.value.options.any { it.mode == OutboundNetworkMode.WIFI }) return
+            SystemClock.sleep(50)
         }
     }
 
