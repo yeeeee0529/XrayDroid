@@ -2,6 +2,24 @@
 
 日期：2026-10-02。
 
+## frp 登入前斷線的獨立診斷（2026-10-02）
+
+- 使用者回報 frp 回報「連線或交握失敗」。實際追查：伺服器在客戶端送出登入訊息後未回應即關閉連線（客戶端得到 `EOF`），`appConnectionError` 落回泛用的 `connection` 分類，真正原因無從得知。
+- 以同一份使用者設定在本機 frps 重現遮蔽機制：**伺服器端 `handleConnection` 會先讀取第一個訊息（`acceptConnection`），才依 `tcpMux` 決定是否以 yamux 包裝連線**；客戶端則是先包裝再送登入。兩端 `tcpMux` 不一致時，雙方在訊息框架層永遠對不上，伺服器視為無效連線關閉，**伺服器真正的原因永遠送不到客戶端**。四組對照確認：僅「兩端一致」時才會顯示伺服器的實際拒絕原因。
+- 新增 `closed` 分類：`appConnectionError` 以 `errors.Is(err, io.EOF)`／`io.ErrUnexpectedEOF` 判斷。以診斷版 frpc 實測型別鏈確認，`tcpMux` 不一致與舊版 frps 兩種情境皆為 `*errors.errorString` "EOF" 且 `errors.Is(..., io.EOF)` 為真，權杖不符則為 `client.appLoginError`（不會誤判）。分類順序置於 `unreachable` 之後、`default` 之前，不影響既有逾時、TLS 等判斷。
+- 排除了權杖在傳輸中被破壞的可能：實測 `privilege_key` 等於 `md5(檔案中的權杖 + timestamp)`，且檔案內權杖為 94 字元純 ASCII、無跳脫問題；因此現有 `login_rejected` 等分類不需改動。使用者環境的實際拒絕原因（權杖不符）與 `tcpMux` 兩端不一致為兩獨立問題，已於對話中回報使用者，未修改使用者任何設定。
+- 依「錯誤代碼」與「顯示文字」必須一對一的前提，將重複的 9 個代碼收斂為單一 `internal val errorDetails` 清單，`FrpService` 白名單與 `detail` 文字共用同一來源，避免日後新增分類時只在其中一處更新而靜默退回泛用訊息。
+- 受影響檔案：`client/app_status.go`、`client/app_status_test.go`、`patches/frp-android.patch`（重新產生，483 行）、`FrpConnectionStatus.kt`、`FrpService.kt`、`FrpConnectionStatusTest.kt`、CHANGELOG、本紀錄。未修改使用者 frpc.toml、資料庫或伺服器端設定。
+
+### 實際驗證與限制
+
+- Go：`gofmt` 無差異；`go test ./client -run 'TestApp' -count=1` **4 項全數通過**（新增 `TestAppStatusReportsServerClosedLoginAsOwnCode`，並擴充錯誤分類表加入 `io.EOF`、包裝後的 `io.EOF` 與 `io.ErrUnexpectedEOF` 三例）。新增案例確認未通過時 `errors.New("private-token")` 仍落在 `connection`，不會誤收。
+- 端到端：以重建後 host frpc 搭配**使用者的實際設定**連線真實 frps，查詢 `/api/xraydroid/status` 實際得到 `{"connection":{"state":"retrying","error":"closed","attempts":3},"proxies":[]}`，確認新分類確實經完整路徑送達 App，非僅單元測試層級。此測試只讀取設定檔內容計算雜湊與送出登入訊息，未輸出權杖。
+- Patch：重新產生後以 `git apply --check` 對乾淨 checkout 正向套用通過，`git apply --reverse --check` 對工作區反向套用通過。`./scripts/build-frpc.sh` 通過（含官方前端 build、Go 模組驗證、Android arm64 frpc 與 host 驗證工具）；產出 `libfrpc.so` 三個 LOAD 段皆為 16 KB 對齊。
+- Kotlin／Android：`:app:ktlintFormat`、`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 通過；JVM **19 項、0 failures／errors**（原 17 項，新增 2 項），Android lint 0 errors、0 warnings，保留既有 2 項 AutoboxingStateCreation hints。
+- 實機：正式 APK（`output-metadata.json` 確認 `io.github.xraydroid`）以 `adb install -r` 更新成功並保留資料，`am start -W` 回報 COLD／Status ok，主程序存在。未啟動使用者 frp 服務、未修改其設定；交易層驗證僅涵蓋靜態檢查與啟動，未在使用者裝置上實際觸發 `closed` 狀態畫面。
+- 未驗證：其他導致登入前斷線的原因（例如中間設備重置）也會歸入 `closed`，訊息以 `tcpMux` 不一致為主要提示而非唯一結論；其他 OEM／Android 版本未測。診斷用的一次性檔案位於 `/tmp/frpdbg/`，未進入版控。
+
 ## frp 實際連線狀態（2026-10-02）
 
 - 原本「用戶端運作中」只代表 frpc 程序與本機狀態 API 可用；首次登入失敗或沒有代理時列表可能為空，無法確認是否登入 frps。改為在 frp 頁最上方顯示實際登入狀態、固定分類診斷與嘗試次數；通知同步連線狀態。
