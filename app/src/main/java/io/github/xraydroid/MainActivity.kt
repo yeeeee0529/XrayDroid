@@ -16,9 +16,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -143,7 +145,12 @@ class MainActivity : ComponentActivity() {
                         if (page == "frp") window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
                     }
                 }
-                Box(Modifier.fillMaxSize()) {
+                // 疊層外圍填主題背景色：背景頁起始為 0.95 時，避免透出淺色 window 背景。
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                ) {
                     val target = backTarget
                     if (target == null) {
                         content(page)

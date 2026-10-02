@@ -18,6 +18,8 @@ Android predictive back（預測返回手勢）整合：Manifest 加入 `android
 
 首頁顯示修正：移除副標題，重新啟動按鈕改用狀態卡對應前景色與外框；Kotlin 編譯、ktlint 與 lint、APK build 通過。此次為純顯示變更，未新增測試；真機視覺複查仍受裝置鎖定限制。
 
+Predictive back 過場白邊修正：使用者實拍手勢中間幀顯示設定頁縮放時四周露出白邊。根因為疊層根 Box 透明，背景目標頁起始縮放 0.95 時其外圍透出 Manifest theme（`Theme.Material.Light`）的淺色 window background。修正為根 Box 填入 `MaterialTheme.colorScheme.background`。修正後再次安裝並實測：手勢中間幀的左／右／頂部邊緣平均 RGB 約 (26–27, 8–11)（深色主題背景），白邊消失；手勢隨後 commit 正常回首頁。ktlintCheck、lintDebug、testDebugUnitTest、assembleDebug 通過，APK application ID 實際確認為 `io.github.xraydroid` 並以 `adb install -r` 更新保留正式資料。僅驗證深色主題實拍；淺色主題下過場外圍顏色未另行取樣。
+
 [專案首頁](../README.md) · [繁體中文](zh-TW/README.md) · [English](en/README.md)
 
 ## frpc 表單／TOML 雙模式配置
