@@ -5,11 +5,40 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.atomic.AtomicLong
 import org.tomlj.Toml
 import org.tomlj.TomlArray
 import org.tomlj.TomlTable
 
-data class FrpConfigDocument(val values: Map<String, Any>, val source: String) {
+class FrpConfigDocument private constructor(
+    val values: Map<String, Any>,
+    originalSource: String?,
+    private val ruleIds: Map<String, List<Long>>
+) {
+    constructor(values: Map<String, Any>, source: String) : this(stringMap(values), source, emptyMap())
+
+    private val sourceCache = lazy { originalSource ?: buildString { appendTable(values, emptyList()) } }
+    val source: String get() = sourceCache.value
+    internal val isSourceMaterialized: Boolean get() = sourceCache.isInitialized()
+    private val identities = lazy {
+        listOf("proxies", "visitors").associateWith { kind ->
+            ruleIds[kind] ?: (values[kind] as? List<*>).orEmpty().map { nextRuleId.incrementAndGet() }
+        }
+    }
+
+    fun ruleId(kind: String, index: Int): Long {
+        requireRuleKind(kind)
+        return identities.value.getValue(kind)[index]
+    }
+
+    operator fun component1(): Map<String, Any> = values
+    operator fun component2(): String = source
+    fun copy(values: Map<String, Any> = this.values, source: String = this.source): FrpConfigDocument = FrpConfigDocument(values, source)
+
+    override fun equals(other: Any?): Boolean =
+        this === other || other is FrpConfigDocument && values == other.values && source == other.source
+    override fun hashCode(): Int = 31 * values.hashCode() + source.hashCode()
+
     fun get(path: String): Any? = readPath(values, keyPath(path))
 
     fun set(path: String, value: Any?): FrpConfigDocument = changed(writePath(values, keyPath(path), value))
@@ -18,14 +47,16 @@ data class FrpConfigDocument(val values: Map<String, Any>, val source: String) {
         requireRuleKind(kind)
         val entries = values[kind] ?: return emptyList()
         require(entries is List<*> && entries.all { it is Map<*, *> }) { "Invalid rule list." }
-        return entries.map { stringMap(it as Map<*, *>) }
+        // 建構與寫入時已正規化所有巢狀值，可共用未修改的規則而不再深層複製。
+        @Suppress("UNCHECKED_CAST")
+        return entries as List<Map<String, Any>>
     }
 
     fun updateRule(kind: String, index: Int, path: String, value: Any?): FrpConfigDocument {
         val entries = rules(kind).toMutableList()
         require(index in entries.indices) { "Invalid rule index." }
         entries[index] = writePath(entries[index], keyPath(path), value)
-        return set(kind, entries)
+        return changed(values + (kind to entries))
     }
 
     fun addRule(kind: String, type: String): FrpConfigDocument {
@@ -54,23 +85,35 @@ data class FrpConfigDocument(val values: Map<String, Any>, val source: String) {
                 "stcp", "sudp", "xtcp" -> rule["secretKey"] = ""
             }
         }
-        return set(kind, entries + rule)
+        return changed(
+            values + (kind to (entries + rule)),
+            identities.value + (kind to (identities.value.getValue(kind) + nextRuleId.incrementAndGet()))
+        )
     }
 
     fun removeRule(kind: String, index: Int): FrpConfigDocument {
         val entries = rules(kind).toMutableList()
         require(index in entries.indices) { "Invalid rule index." }
         entries.removeAt(index)
-        return set(kind, entries.takeIf { it.isNotEmpty() })
+        val updated = if (entries.isEmpty()) values - kind else values + (kind to entries)
+        return changed(
+            updated,
+            identities.value + (kind to identities.value.getValue(kind).filterIndexed { position, _ -> position != index })
+        )
     }
 
-    private fun changed(updated: Map<String, Any>): FrpConfigDocument {
+    private fun changed(updated: Map<String, Any>, ids: Map<String, List<Long>>? = null): FrpConfigDocument {
         if (updated == values) return this
-        val output = buildString { appendTable(updated, emptyList()) }
-        return FrpConfigDocument(updated, output)
+        val retainedIds = listOf("proxies", "visitors").associateWith { kind ->
+            val entries = updated[kind] as? List<*>
+            val previous = (ids ?: identities.value)[kind].orEmpty()
+            if (entries?.size == previous.size) previous else entries.orEmpty().map { nextRuleId.incrementAndGet() }
+        }
+        return FrpConfigDocument(updated, null, retainedIds)
     }
 
     companion object {
+        private val nextRuleId = AtomicLong()
         val proxyTypes = listOf("tcp", "udp", "http", "https", "tcpmux", "stcp", "sudp", "xtcp")
         val visitorTypes = listOf("stcp", "sudp", "xtcp")
 
@@ -81,7 +124,7 @@ data class FrpConfigDocument(val values: Map<String, Any>, val source: String) {
             try {
                 val parsed = Toml.parse(text)
                 require(!parsed.hasErrors()) { "Invalid TOML configuration." }
-                return FrpConfigDocument(readTable(parsed), text)
+                return FrpConfigDocument(readTable(parsed), text, emptyMap())
             } catch (_: RuntimeException) {
                 throw IllegalArgumentException("Invalid TOML configuration.")
             } catch (_: StackOverflowError) {
@@ -135,7 +178,9 @@ data class FrpConfigDocument(val values: Map<String, Any>, val source: String) {
                 val existing = map[key]
                 require(existing == null || existing is Map<*, *>) { "Configuration key conflicts with an existing value." }
                 if (value == null && existing == null) return map
-                val nested = writePath(existing?.let { stringMap(it as Map<*, *>) } ?: emptyMap(), path.drop(1), value)
+                // 巢狀容器只會來自已正規化的 values，保留其他分支的參照。
+                @Suppress("UNCHECKED_CAST")
+                val nested = writePath(existing as? Map<String, Any> ?: emptyMap(), path.drop(1), value)
                 if (nested.isEmpty()) updated.remove(key) else updated[key] = nested
             }
             return updated

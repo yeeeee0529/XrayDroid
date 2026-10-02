@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -48,36 +49,82 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
     val scope = rememberCoroutineScope()
     // 設定與權杖只留在記憶體，不寫入 Activity 儲存狀態。
     var draft by remember { mutableStateOf(state.config) }
-    var initialized by remember { mutableStateOf(state.loaded) }
+    var initialized by remember { mutableStateOf(false) }
     var working by remember { mutableStateOf(false) }
     var feedback by remember { mutableStateOf("") }
     var confirmLeave by remember { mutableStateOf(false) }
     var pendingTemplate by remember { mutableStateOf<String?>(null) }
-    var document by remember { mutableStateOf(parseFormDocument(state.config)) }
-    var formMode by remember { mutableStateOf(document != null) }
+    var document by remember { mutableStateOf<FrpConfigDocument?>(null, referentialEqualityPolicy()) }
+    var savedDocument by remember { mutableStateOf<FrpConfigDocument?>(null, referentialEqualityPolicy()) }
+    var savedText by remember { mutableStateOf(state.config) }
+    var formMode by remember { mutableStateOf(false) }
     val formState = remember { FrpFormState() }
     val formValid = formState.isValid
-    val busy = working || state.phase in setOf(FrpPhase.VALIDATING, FrpPhase.STARTING, FrpPhase.STOPPING)
-    val dirty = draft != state.config || !formValid
-    val canSave = !busy && initialized && formValid
-    LaunchedEffect(state.loaded) {
+    val busy = working || !initialized || state.phase in setOf(FrpPhase.VALIDATING, FrpPhase.STARTING, FrpPhase.STOPPING)
+    // 表單只比較草稿版本；避免每次輸入為了判斷未存變更而產生整份 TOML。
+    val edited = if (formMode) document !== savedDocument || savedText != state.config else draft != state.config
+    val dirty = initialized && edited || !formValid
+    val canSave = !busy && formValid
+    LaunchedEffect(state.loaded, state.config) {
         if (state.loaded && !initialized) {
-            draft = state.config
-            document = parseFormDocument(draft)
-            formMode = document != null
+            val text = state.config
+            val parsed = withContext(Dispatchers.Default) { parseFormDocument(text) }
+            draft = text
+            savedText = text
+            document = parsed
+            savedDocument = parsed
+            formMode = parsed != null
             initialized = true
         }
     }
     val leave: () -> Unit = { if (dirty) confirmLeave = true else onBack() }
     // 有未存變更時返回先彈確認；乾淨時交給 MainActivity 的 predictive back 過場。
     BackHandler(enabled = dirty) { leave() }
-    fun saveThen(action: (() -> Unit)? = null) {
+    fun exportDraft(consume: suspend (String, FrpConfigDocument?) -> Unit) {
+        if (busy) return
+        val snapshot = if (formMode) document else null
+        val text = draft
         working = true
         scope.launch {
             try {
-                val saved = withContext(Dispatchers.IO) { FrpStore.saveConfig(context, draft) }
-                feedback = if (saved) "設定已儲存；執行中的用戶端需重新啟動套用。" else "設定未儲存，請確認 TOML 格式與設定值。"
-                if (saved) action?.invoke()
+                val exported = withContext(Dispatchers.Default) { snapshot?.source ?: text }
+                consume(exported, snapshot)
+            } finally {
+                working = false
+            }
+        }
+    }
+    fun saveThen(action: (() -> Unit)? = null) {
+        exportDraft { text, snapshot ->
+            val saved = withContext(Dispatchers.IO) { FrpStore.saveConfig(context, text) }
+            feedback = if (saved) "設定已儲存；執行中的用戶端需重新啟動套用。" else "設定未儲存，請確認 TOML 格式與設定值。"
+            if (saved) {
+                draft = text
+                savedText = text
+                savedDocument = snapshot
+                action?.invoke()
+            }
+        }
+    }
+    fun switchToForm() {
+        if (busy) return
+        val text = draft
+        working = true
+        scope.launch {
+            try {
+                val parsed = withContext(Dispatchers.Default) { parseFormDocument(text) }
+                if (parsed == null) {
+                    feedback = "無法切換至表單，請檢查 TOML 語法與欄位型別；原有草稿已保留。"
+                } else {
+                    document = parsed
+                    if (text == state.config) {
+                        savedDocument = parsed
+                        savedText = text
+                    }
+                    formMode = true
+                    formState.clear()
+                    feedback = ""
+                }
             } finally {
                 working = false
             }
@@ -192,17 +239,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                     Button(onClick = {}, enabled = initialized && !busy, modifier = Modifier.weight(1f)) { Text("表單配置") }
                 } else {
                     OutlinedButton(
-                        onClick = {
-                            val parsed = parseFormDocument(draft)
-                            if (parsed == null) {
-                                feedback = "無法切換至表單，請檢查 TOML 語法與欄位型別；原有草稿已保留。"
-                            } else {
-                                document = parsed
-                                formMode = true
-                                formState.clear()
-                                feedback = ""
-                            }
-                        },
+                        onClick = ::switchToForm,
                         enabled = initialized && !busy,
                         modifier = Modifier.weight(1f)
                     ) { Text("表單配置") }
@@ -210,8 +247,11 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                 if (formMode) {
                     OutlinedButton(
                         onClick = {
-                            formMode = false
-                            formState.clear()
+                            exportDraft { text, _ ->
+                                draft = text
+                                formMode = false
+                                formState.clear()
+                            }
                         },
                         enabled = initialized && !busy && formValid,
                         modifier = Modifier.weight(1f)
@@ -222,20 +262,19 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
             }
             Text("兩種模式共用同一份草稿；表單修改會重新排版 TOML 並移除註解，其他設定值會保留。", style = MaterialTheme.typography.bodySmall)
         }
-        if (formMode) {
-            item {
-                document?.let { current ->
-                    FrpConfigForm(
-                        document = current,
-                        enabled = initialized && !busy,
-                        onChange = {
-                            document = it
-                            draft = it.source
-                            feedback = ""
-                        },
-                        formState = formState
-                    )
-                }
+        if (!initialized) {
+            item(key = "frp/loading") { Text("正在載入設定") }
+        } else if (formMode) {
+            document?.let { current ->
+                frpConfigFormItems(
+                    document = current,
+                    enabled = initialized && !busy,
+                    onChange = {
+                        document = it
+                        feedback = ""
+                    },
+                    formState = formState
+                )
             }
         } else {
             item {
@@ -258,14 +297,9 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(
                     onClick = {
-                        working = true
-                        scope.launch {
-                            try {
-                                val valid = withContext(Dispatchers.IO) { FrpStore.validateConfig(context, draft) }
-                                feedback = if (valid) "設定驗證通過；尚未儲存。" else "設定驗證失敗，請確認 TOML 格式與設定值。"
-                            } finally {
-                                working = false
-                            }
+                        exportDraft { text, _ ->
+                            val valid = withContext(Dispatchers.IO) { FrpStore.validateConfig(context, text) }
+                            feedback = if (valid) "設定驗證通過；尚未儲存。" else "設定驗證失敗，請確認 TOML 格式與設定值。"
                         }
                     },
                     enabled = canSave
@@ -332,12 +366,27 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
             text = { Text("這會取代完整 TOML 草稿，包括進階設定；確認後仍需驗證並儲存。") },
             confirmButton = {
                 TextButton(onClick = {
-                    draft = replacement
-                    document = parseFormDocument(replacement)
-                    formMode = formMode && document != null
-                    formState.clear()
-                    pendingTemplate = null
-                    feedback = ""
+                    if (!working) {
+                        working = true
+                        val preferForm = formMode
+                        scope.launch {
+                            try {
+                                val parsed = withContext(Dispatchers.Default) { parseFormDocument(replacement) }
+                                draft = replacement
+                                document = parsed
+                                if (replacement == state.config) {
+                                    savedDocument = parsed
+                                    savedText = replacement
+                                }
+                                formMode = preferForm && parsed != null
+                                formState.clear()
+                                pendingTemplate = null
+                                feedback = ""
+                            } finally {
+                                working = false
+                            }
+                        }
+                    }
                 }) { Text("取代草稿") }
             },
             dismissButton = { TextButton(onClick = { pendingTemplate = null }) { Text("取消") } }

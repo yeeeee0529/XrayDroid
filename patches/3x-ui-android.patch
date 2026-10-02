@@ -41,34 +41,232 @@ index 0e2a9fa..357e244 100644
  	if !acquireUpdateSlot(runID) {
  		return 0, fmt.Errorf("a panel update is already in progress")
 diff --git a/internal/web/service/server.go b/internal/web/service/server.go
-index 09a9e25..5d8e373 100644
+index 09a9e25..fd735ca 100644
 --- a/internal/web/service/server.go
 +++ b/internal/web/service/server.go
-@@ -459,6 +459,14 @@ func (s *ServerService) resolvePublicIPs() {
- 	}
+@@ -145,16 +145,14 @@ type ServerService struct {
+ 	xrayService        XrayService
+ 	inboundService     InboundService
+ 	settingService     SettingService
+-	cachedIPv4         string
+-	cachedIPv6         string
+-	noIPv6             bool
++	publicIPs          publicIPCache
++	cpuMetadata        cpuMetadataCache
++	androidSampling    androidSamplingCache
+ 	mu                 sync.Mutex
+ 	lastCPUTimes       cpu.TimesStat
+ 	hasLastCPUSample   bool
+ 	hasNativeCPUSample bool
+ 	emaCPU             float64
+-	cachedCpuSpeedMhz  float64
+-	lastCpuInfoAttempt time.Time
+ 
+ 	lastStatusMu sync.RWMutex
+ 	lastStatus   *Status
+@@ -376,42 +374,6 @@ type MLKEM768Response struct {
+ 	Client string `json:"client" example:"mlkem768-client"`
  }
  
+-func getPublicIP(url string) string {
+-	client := &http.Client{
+-		Timeout: 3 * time.Second,
+-	}
+-
+-	req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+-	if reqErr != nil {
+-		return "N/A"
+-	}
+-	resp, err := client.Do(req)
+-	if err != nil {
+-		return "N/A"
+-	}
+-	defer resp.Body.Close()
+-
+-	// Don't retry if access is blocked or region-restricted
+-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnavailableForLegalReasons {
+-		return "N/A"
+-	}
+-	if resp.StatusCode != http.StatusOK {
+-		return "N/A"
+-	}
+-
+-	ip, err := io.ReadAll(resp.Body)
+-	if err != nil {
+-		return "N/A"
+-	}
+-
+-	ipString := strings.TrimSpace(string(ip))
+-	if ipString == "" {
+-		return "N/A"
+-	}
+-
+-	return ipString
+-}
+-
+ var publicIPv4Services = []string{
+ 	"https://api4.ipify.org",
+ 	"https://ipv4.icanhazip.com",
+@@ -429,34 +391,12 @@ var publicIPv6Services = []string{
+ 	"https://6.ident.me",
+ }
+ 
+-// resolvePublicIPs caches the public IPv4/IPv6 addresses on first use. Guarded
+-// by s.mu because the bot's ServerService may call it from sendBackup while a
+-// status report runs concurrently.
+-func (s *ServerService) resolvePublicIPs() {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-
+-	if s.cachedIPv4 == "" {
+-		for _, ip4Service := range publicIPv4Services {
+-			s.cachedIPv4 = getPublicIP(ip4Service)
+-			if s.cachedIPv4 != "N/A" {
+-				break
+-			}
+-		}
+-	}
+-
+-	if s.cachedIPv6 == "" && !s.noIPv6 {
+-		for _, ip6Service := range publicIPv6Services {
+-			s.cachedIPv6 = getPublicIP(ip6Service)
+-			if s.cachedIPv6 != "N/A" {
+-				break
+-			}
+-		}
+-	}
+-
+-	if s.cachedIPv6 == "N/A" {
+-		s.noIPv6 = true
 +// Android 根分割區不代表 App 可寫空間，改查資料庫所在的檔案系統。
 +func diskUsagePath(platform string) string {
 +	if platform == "android" {
 +		return config.GetDBFolderPath()
-+	}
+ 	}
 +	return "/"
-+}
-+
+ }
+ 
  func (s *ServerService) GetStatus(lastStatus *Status) *Status {
- 	now := time.Now()
- 	status := &Status{
-@@ -532,7 +540,7 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
+@@ -473,39 +413,9 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
+ 		status.Cpu = util
+ 	}
+ 
+-	status.CpuCores, err = cpu.Counts(false)
+-	if err != nil {
+-		logger.Warning("get cpu cores count failed:", err)
+-	}
+-
++	status.CpuCores, status.CpuSpeedMhz = s.cpuMetadata.snapshot(runtime.GOOS)
+ 	status.LogicalPro = runtime.NumCPU()
+ 
+-	if status.CpuSpeedMhz = s.cachedCpuSpeedMhz; s.cachedCpuSpeedMhz == 0 && time.Since(s.lastCpuInfoAttempt) > 5*time.Minute {
+-		s.lastCpuInfoAttempt = time.Now()
+-		done := make(chan struct{})
+-		go func() {
+-			defer close(done)
+-			cpuInfos, err := cpu.Info()
+-			if err != nil {
+-				logger.Warning("get cpu info failed:", err)
+-				return
+-			}
+-			if len(cpuInfos) > 0 {
+-				s.cachedCpuSpeedMhz = cpuInfos[0].Mhz
+-				status.CpuSpeedMhz = s.cachedCpuSpeedMhz
+-			} else {
+-				logger.Warning("could not find cpu info")
+-			}
+-		}()
+-		select {
+-		case <-done:
+-		case <-time.After(1500 * time.Millisecond):
+-			logger.Warning("cpu info query timed out; will retry later")
+-		}
+-	} else if s.cachedCpuSpeedMhz != 0 {
+-		status.CpuSpeedMhz = s.cachedCpuSpeedMhz
+-	}
+-
+ 	// Uptime
+ 	upTime, err := host.Uptime()
+ 	if err != nil {
+@@ -532,7 +442,7 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
  	}
  
  	// Disk stats
 -	diskInfo, err := disk.Usage("/")
-+	diskInfo, err := disk.Usage(diskUsagePath(runtime.GOOS))
++	diskInfo, err := s.androidSampling.diskUsage(runtime.GOOS, diskUsagePath(runtime.GOOS))
  	if err != nil {
  		logger.Warning("get disk usage failed:", err)
  	} else {
-@@ -1025,6 +1033,9 @@ func parseXrayDigestSHA256(dgst []byte) (string, error) {
+@@ -540,9 +450,11 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
+ 		status.Disk.Total = diskInfo.Total
+ 	}
+ 
+-	diskIOStats, err := disk.IOCounters()
++	diskIOStats, err := sampleAndroidMetric(&s.androidSampling, runtime.GOOS, "diskIO", func() (map[string]disk.IOCountersStat, error) { return disk.IOCounters() })
+ 	if err != nil {
+-		logger.Warning("get disk io counters failed:", err)
++		if !errors.Is(err, errSamplingDeferred) {
++			logger.Warning("get disk io counters failed:", err)
++		}
+ 	} else {
+ 		var totalRead, totalWrite uint64
+ 		for _, counter := range diskIOStats {
+@@ -565,17 +477,21 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
+ 	}
+ 
+ 	// Load averages
+-	avgState, err := load.Avg()
++	avgState, err := sampleAndroidMetric(&s.androidSampling, runtime.GOOS, "load", load.Avg)
+ 	if err != nil {
+-		logger.Warning("get load avg failed:", err)
++		if !errors.Is(err, errSamplingDeferred) {
++			logger.Warning("get load avg failed:", err)
++		}
+ 	} else {
+ 		status.Loads = []float64{avgState.Load1, avgState.Load5, avgState.Load15}
+ 	}
+ 
+ 	// Network stats
+-	ioStats, err := net.IOCounters(true)
++	ioStats, err := sampleAndroidMetric(&s.androidSampling, runtime.GOOS, "netIO", func() ([]net.IOCountersStat, error) { return net.IOCounters(true) })
+ 	if err != nil {
+-		logger.Warning("get io counters failed:", err)
++		if !errors.Is(err, errSamplingDeferred) {
++			logger.Warning("get io counters failed:", err)
++		}
+ 	} else {
+ 		var totalSent, totalRecv, totalPktSent, totalPktRecv uint64
+ 		for _, iface := range ioStats {
+@@ -610,19 +526,21 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
+ 	}
+ 
+ 	// TCP/UDP connections
+-	status.TcpCount, err = sys.GetTCPCount()
++	status.TcpCount, err = sampleAndroidMetric(&s.androidSampling, runtime.GOOS, "tcp", sys.GetTCPCount)
+ 	if err != nil {
+-		logger.Warning("get tcp connections failed:", err)
++		if !errors.Is(err, errSamplingDeferred) {
++			logger.Warning("get tcp connections failed:", err)
++		}
+ 	}
+ 
+-	status.UdpCount, err = sys.GetUDPCount()
++	status.UdpCount, err = sampleAndroidMetric(&s.androidSampling, runtime.GOOS, "udp", sys.GetUDPCount)
+ 	if err != nil {
+-		logger.Warning("get udp connections failed:", err)
++		if !errors.Is(err, errSamplingDeferred) {
++			logger.Warning("get udp connections failed:", err)
++		}
+ 	}
+ 
+-	s.resolvePublicIPs()
+-	status.PublicIP.IPv4 = s.cachedIPv4
+-	status.PublicIP.IPv6 = s.cachedIPv6
++	status.PublicIP.IPv4, status.PublicIP.IPv6 = s.publicIPs.snapshot()
+ 
+ 	// Xray status
+ 	if s.xrayService.IsXrayRunning() {
+@@ -1025,6 +943,9 @@ func parseXrayDigestSHA256(dgst []byte) (string, error) {
  }
  
  func (s *ServerService) UpdateXray(version string) error {
@@ -78,6 +276,23 @@ index 09a9e25..5d8e373 100644
  	versions, err := s.GetXrayVersions()
  	if err != nil {
  		return err
+@@ -1548,11 +1469,11 @@ func (s *ServerService) backupHost(requestHost string) string {
+ 		}
+ 	}
+ 	if host == "" {
+-		s.resolvePublicIPs()
+-		if ip := s.cachedIPv4; ip != "" && ip != "N/A" {
+-			host = ip
+-		} else if ip := s.cachedIPv6; ip != "" && ip != "N/A" {
+-			host = ip
++		ipv4, ipv6 := s.publicIPs.load(true)
++		if ipv4 != "" && ipv4 != "N/A" {
++			host = ipv4
++		} else if ipv6 != "" && ipv6 != "N/A" {
++			host = ipv6
+ 		}
+ 	}
+ 	return sanitizeBackupHost(host)
 diff --git a/internal/web/service/setting.go b/internal/web/service/setting.go
 index 097dda4..994213d 100644
 --- a/internal/web/service/setting.go
@@ -303,5 +518,491 @@ index 0000000..b6a3705
 +		if got := diskUsagePath(platform); got != "/" {
 +			t.Errorf("%s disk path = %q, want root", platform, got)
 +		}
++	}
++}
+diff --git a/internal/web/service/server_sampling.go b/internal/web/service/server_sampling.go
+new file mode 100644
+index 0000000..a095098
+--- /dev/null
++++ b/internal/web/service/server_sampling.go
+@@ -0,0 +1,190 @@
++package service
++
++import (
++	"context"
++	"errors"
++	"io"
++	"net"
++	"net/http"
++	"os"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/shirou/gopsutil/v4/cpu"
++	"github.com/shirou/gopsutil/v4/disk"
++)
++
++const publicIPTimeout = 3 * time.Second
++
++type publicIPCache struct {
++	mu         sync.Mutex
++	ipv4, ipv6 string
++	resolved   bool
++	pending    chan struct{}
++}
++
++func (c *publicIPCache) snapshot() (string, string) {
++	return c.load(false)
++}
++
++func (c *publicIPCache) load(wait bool) (string, string) {
++	c.mu.Lock()
++	if c.pending == nil && !c.resolved {
++		c.pending = make(chan struct{})
++		go c.refresh(c.pending, http.DefaultClient, publicIPv4Services, publicIPv6Services, publicIPTimeout)
++	}
++	pending := c.pending
++	if wait && pending != nil {
++		c.mu.Unlock()
++		<-pending
++		c.mu.Lock()
++	}
++	defer c.mu.Unlock()
++	ipv4, ipv6 := c.ipv4, c.ipv6
++	if ipv4 == "" {
++		ipv4 = "N/A"
++	}
++	if ipv6 == "" {
++		ipv6 = "N/A"
++	}
++	return ipv4, ipv6
++}
++
++// 每個服務實例只查詢一次；兩個位址族群共用期限，最多同時送出兩個請求。
++func (c *publicIPCache) refresh(done chan struct{}, client *http.Client, ipv4Services, ipv6Services []string, timeout time.Duration) {
++	ctx, cancel := context.WithTimeout(context.Background(), timeout)
++	defer cancel()
++	var ipv4, ipv6 string
++	var workers sync.WaitGroup
++	workers.Add(2)
++	go func() { defer workers.Done(); ipv4 = resolvePublicIP(ctx, client, ipv4Services, false) }()
++	go func() { defer workers.Done(); ipv6 = resolvePublicIP(ctx, client, ipv6Services, true) }()
++	workers.Wait()
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	c.ipv4, c.ipv6 = ipv4, ipv6
++	c.resolved = true
++	c.pending = nil
++	close(done)
++}
++
++func resolvePublicIP(ctx context.Context, client *http.Client, services []string, ipv6 bool) string {
++	for _, endpoint := range services {
++		if ctx.Err() != nil {
++			break
++		}
++		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
++		if err != nil {
++			continue
++		}
++		resp, err := client.Do(req)
++		if err != nil {
++			continue
++		}
++		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 65))
++		_ = resp.Body.Close()
++		if resp.StatusCode != http.StatusOK || readErr != nil || len(body) > 64 {
++			continue
++		}
++		ip := net.ParseIP(strings.TrimSpace(string(body)))
++		if ip != nil && (ip.To4() == nil) == ipv6 {
++			return ip.String()
++		}
++	}
++	return "N/A"
++}
++
++// CPU 拓樸低頻更新；查詢 goroutine 只寫入快取，不修改已發布的統計。
++type cpuMetadataCache struct {
++	mu          sync.Mutex
++	cores       int
++	mhz         float64
++	nextRefresh time.Time
++	pending     bool
++}
++
++func (c *cpuMetadataCache) snapshot(platform string) (int, float64) {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	if !c.pending && !time.Now().Before(c.nextRefresh) {
++		c.pending = true
++		go c.refresh(platform)
++	}
++	return c.cores, c.mhz
++}
++
++func (c *cpuMetadataCache) refresh(platform string) {
++	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
++	defer cancel()
++	cores, coresErr := cpu.CountsWithContext(ctx, false)
++	infos, infoErr := cpu.InfoWithContext(ctx)
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	if coresErr == nil {
++		c.cores = cores
++	}
++	if infoErr == nil && len(infos) > 0 {
++		c.mhz = infos[0].Mhz
++	}
++	ttl := 5 * time.Minute
++	if platform == "android" {
++		ttl = 30 * time.Minute
++	}
++	if coresErr != nil || infoErr != nil || len(infos) == 0 {
++		ttl = time.Minute
++	}
++	c.nextRefresh = time.Now().Add(ttl)
++	c.pending = false
++}
++
++const androidDeniedMetricRetryTTL = 5 * time.Minute
++
++var errSamplingDeferred = errors.New("metric sampling deferred after permission denial")
++
++type androidSamplingCache struct {
++	mu          sync.Mutex
++	disk        *disk.UsageStat
++	diskPath    string
++	diskExpires time.Time
++	denied      map[string]time.Time
++}
++
++func (c *androidSamplingCache) diskUsage(platform, path string) (*disk.UsageStat, error) {
++	if platform != "android" {
++		return disk.Usage(path)
++	}
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	if c.disk != nil && c.diskPath == path && time.Now().Before(c.diskExpires) {
++		return c.disk, nil
++	}
++	info, err := disk.Usage(path)
++	if err == nil {
++		c.disk, c.diskPath, c.diskExpires = info, path, time.Now().Add(30*time.Second)
++	}
++	return info, err
++}
++
++// Android 權限拒絕才延後重試；暫時性錯誤與可用的動態計數維持每輪取樣。
++func sampleAndroidMetric[T any](c *androidSamplingCache, platform, metric string, fetch func() (T, error)) (T, error) {
++	if platform != "android" {
++		return fetch()
++	}
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	if time.Now().Before(c.denied[metric]) {
++		var zero T
++		return zero, errSamplingDeferred
++	}
++	value, err := fetch()
++	if errors.Is(err, os.ErrPermission) {
++		if c.denied == nil {
++			c.denied = make(map[string]time.Time)
++		}
++		c.denied[metric] = time.Now().Add(androidDeniedMetricRetryTTL)
++	} else {
++		delete(c.denied, metric)
++	}
++	return value, err
++}
+diff --git a/internal/web/service/server_sampling_test.go b/internal/web/service/server_sampling_test.go
+new file mode 100644
+index 0000000..4c63ed7
+--- /dev/null
++++ b/internal/web/service/server_sampling_test.go
+@@ -0,0 +1,284 @@
++package service
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++func setPublicIPTestServices(t *testing.T, ipv4, ipv6 []string) {
++	t.Helper()
++	previous4, previous6 := publicIPv4Services, publicIPv6Services
++	publicIPv4Services, publicIPv6Services = ipv4, ipv6
++	t.Cleanup(func() { publicIPv4Services, publicIPv6Services = previous4, previous6 })
++}
++
++func TestPublicIPSnapshotDoesNotWaitForNetwork(t *testing.T) {
++	entered := make(chan struct{}, 2)
++	var requests, active, maximum atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		requests.Add(1)
++		current := active.Add(1)
++		defer active.Add(-1)
++		for old := maximum.Load(); current > old && !maximum.CompareAndSwap(old, current); old = maximum.Load() {
++		}
++		entered <- struct{}{}
++		<-r.Context().Done()
++	}))
++	defer server.Close()
++	setPublicIPTestServices(t, []string{server.URL, server.URL}, []string{server.URL, server.URL})
++	cache := publicIPCache{}
++	start := time.Now()
++	ipv4, ipv6 := cache.snapshot()
++	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
++		t.Fatalf("snapshot waited %s for blocked network", elapsed)
++	}
++	if ipv4 != "N/A" || ipv6 != "N/A" {
++		t.Fatalf("pending snapshot = %q, %q", ipv4, ipv6)
++	}
++	for i := 0; i < 2; i++ {
++		select {
++		case <-entered:
++		case <-time.After(time.Second):
++			t.Fatal("IPv4 and IPv6 requests did not run concurrently")
++		}
++	}
++	var readers sync.WaitGroup
++	for i := 0; i < 100; i++ {
++		readers.Go(func() { cache.snapshot() })
++	}
++	readers.Wait()
++	cache.mu.Lock()
++	done := cache.pending
++	cache.mu.Unlock()
++	select {
++	case <-done:
++	case <-time.After(4 * time.Second):
++		t.Fatal("resolution exceeded shared deadline")
++	}
++	if got := requests.Load(); got != 2 {
++		t.Fatalf("blocked requests = %d, want 2", got)
++	}
++	if got := maximum.Load(); got != 2 {
++		t.Fatalf("peak concurrency = %d, want 2", got)
++	}
++	cache.snapshot()
++	if got := requests.Load(); got != 2 {
++		t.Fatalf("failed resolution was unexpectedly retried: %d", got)
++	}
++}
++
++func TestPublicIPCachePersistsUntilNewService(t *testing.T) {
++	var requests atomic.Int32
++	var failing atomic.Bool
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		requests.Add(1)
++		if failing.Load() {
++			w.WriteHeader(http.StatusServiceUnavailable)
++			return
++		}
++		if r.URL.Path == "/4" {
++			fmt.Fprintln(w, "203.0.113.8")
++		} else {
++			fmt.Fprintln(w, "2001:db8::8")
++		}
++	}))
++	defer server.Close()
++	setPublicIPTestServices(t, []string{server.URL + "/4"}, []string{server.URL + "/6"})
++	cache := publicIPCache{}
++	ipv4, ipv6 := cache.load(true)
++	if ipv4 != "203.0.113.8" || ipv6 != "2001:db8::8" {
++		t.Fatalf("resolved addresses = %q, %q", ipv4, ipv6)
++	}
++	for i := 0; i < 10; i++ {
++		cache.snapshot()
++	}
++	if got := requests.Load(); got != 2 {
++		t.Fatalf("cached requests = %d, want 2", got)
++	}
++	failing.Store(true)
++	ipv4, ipv6 = cache.load(true)
++	if ipv4 != "203.0.113.8" || ipv6 != "2001:db8::8" {
++		t.Fatalf("cached addresses changed during same service lifetime: %q, %q", ipv4, ipv6)
++	}
++	if got := requests.Load(); got != 2 {
++		t.Fatalf("successful cache retried: %d requests, want 2", got)
++	}
++	failedCache := publicIPCache{}
++	ipv4, ipv6 = failedCache.load(true)
++	if ipv4 != "N/A" || ipv6 != "N/A" {
++		t.Fatalf("failed addresses = %q, %q", ipv4, ipv6)
++	}
++	failing.Store(false)
++	for i := 0; i < 100; i++ {
++		ipv4, ipv6 = failedCache.load(true)
++		if ipv4 != "N/A" || ipv6 != "N/A" {
++			t.Fatalf("failed cache changed during same service lifetime: %q, %q", ipv4, ipv6)
++		}
++	}
++	if got := requests.Load(); got != 4 {
++		t.Fatalf("failed cache retried: %d requests, want 4 total", got)
++	}
++	restartedCache := publicIPCache{}
++	ipv4, ipv6 = restartedCache.load(true)
++	if ipv4 != "203.0.113.8" || ipv6 != "2001:db8::8" {
++		t.Fatalf("new service failed to resolve: %q, %q", ipv4, ipv6)
++	}
++	if got := requests.Load(); got != 6 {
++		t.Fatalf("new service requests = %d, want 6 total", got)
++	}
++}
++
++func TestPublicIPRejectsInvalidAndWrongFamily(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch r.URL.Path {
++		case "/invalid":
++			fmt.Fprintln(w, "not an IP")
++		case "/4":
++			fmt.Fprintln(w, "203.0.113.9")
++		case "/6":
++			fmt.Fprintln(w, "2001:db8::9")
++		case "/large":
++			fmt.Fprintf(w, "%065d", 1)
++		}
++	}))
++	defer server.Close()
++	for _, tt := range []struct {
++		name      string
++		ipv6      bool
++		endpoints []string
++		want      string
++	}{
++		{"IPv4 fallback", false, []string{"/invalid", "/6", "/large", "/4"}, "203.0.113.9"},
++		{"IPv6 fallback", true, []string{"/invalid", "/4", "/6"}, "2001:db8::9"},
++		{"invalid response", false, []string{"/invalid", "/large"}, "N/A"},
++	} {
++		t.Run(tt.name, func(t *testing.T) {
++			endpoints := make([]string, len(tt.endpoints))
++			for i, endpoint := range tt.endpoints {
++				endpoints[i] = server.URL + endpoint
++			}
++			got := resolvePublicIP(context.Background(), server.Client(), endpoints, tt.ipv6)
++			if got != tt.want {
++				t.Fatalf("resolved IP = %q, want %q", got, tt.want)
++			}
++		})
++	}
++}
++
++func TestAndroidMetricDenialBackoffPreservesTransientRetry(t *testing.T) {
++	cache := androidSamplingCache{}
++	calls := 0
++	denied := func() (int, error) { calls++; return 0, fmt.Errorf("read /proc: %w", os.ErrPermission) }
++	_, err := sampleAndroidMetric(&cache, "android", "tcp", denied)
++	if !errors.Is(err, os.ErrPermission) {
++		t.Fatalf("first denial = %v", err)
++	}
++	for i := 0; i < 100; i++ {
++		_, err = sampleAndroidMetric(&cache, "android", "tcp", denied)
++		if !errors.Is(err, errSamplingDeferred) {
++			t.Fatalf("deferred denial = %v", err)
++		}
++	}
++	if calls != 1 {
++		t.Fatalf("denied metric calls = %d, want 1", calls)
++	}
++	cache.denied["tcp"] = time.Time{}
++	value, err := sampleAndroidMetric(&cache, "android", "tcp", func() (int, error) { return 42, nil })
++	if value != 42 || err != nil {
++		t.Fatalf("permission recovery = %d, %v", value, err)
++	}
++	transient := errors.New("temporary sample failure")
++	for i := 0; i < 2; i++ {
++		_, err = sampleAndroidMetric(&cache, "android", "tcp", func() (int, error) { calls++; return 0, transient })
++		if !errors.Is(err, transient) {
++			t.Fatalf("transient error = %v", err)
++		}
++	}
++	if calls != 3 {
++		t.Fatalf("transient calls = %d, want 3 total", calls)
++	}
++	for i := 0; i < 2; i++ {
++		sampleAndroidMetric(&cache, "linux", "tcp", denied)
++	}
++	if calls != 5 {
++		t.Fatalf("non-Android calls = %d, want 5 total", calls)
++	}
++}
++
++func TestAndroidDiskUsageRefreshesAfterExpiration(t *testing.T) {
++	cache := androidSamplingCache{}
++	path := t.TempDir()
++	initial, err := cache.diskUsage("android", path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	initial.Total = 123
++	cached, err := cache.diskUsage("android", path)
++	if err != nil || cached.Total != 123 {
++		t.Fatalf("unexpired disk cache = %v, %v", cached, err)
++	}
++	cache.diskExpires = time.Time{}
++	refreshed, err := cache.diskUsage("android", path)
++	if err != nil || refreshed.Total == 123 {
++		t.Fatalf("expired disk cache did not refresh: %v, %v", refreshed, err)
++	}
++}
++
++func TestCPUMetadataConcurrentSnapshots(t *testing.T) {
++	cache := cpuMetadataCache{}
++	var readers sync.WaitGroup
++	for i := 0; i < 100; i++ {
++		readers.Go(func() { cache.snapshot("android") })
++	}
++	readers.Wait()
++	deadline := time.Now().Add(5 * time.Second)
++	for time.Now().Before(deadline) {
++		cache.mu.Lock()
++		pending := cache.pending
++		cache.mu.Unlock()
++		if !pending {
++			return
++		}
++		time.Sleep(time.Millisecond)
++	}
++	t.Fatal("CPU metadata worker did not complete")
++}
++
++func TestGetStatusPublishesLocalSnapshotBeforeIPResolution(t *testing.T) {
++	initFlowTestDB(t)
++	release := make(chan struct{})
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		select {
++		case <-release:
++			if r.URL.Path == "/4" {
++				fmt.Fprintln(w, "203.0.113.10")
++			} else {
++				fmt.Fprintln(w, "2001:db8::10")
++			}
++		case <-r.Context().Done():
++		}
++	}))
++	defer server.Close()
++	defer close(release)
++	setPublicIPTestServices(t, []string{server.URL + "/4"}, []string{server.URL + "/6"})
++	service := ServerService{}
++	start := time.Now()
++	status := service.GetStatus(nil)
++	if elapsed := time.Since(start); elapsed > 2*time.Second {
++		t.Fatalf("local status waited %s for network", elapsed)
++	}
++	if status.Disk.Total == 0 || status.Mem.Total == 0 {
++		t.Fatal("first local snapshot missing disk or memory statistics")
++	}
++	if status.PublicIP.IPv4 != "N/A" || status.PublicIP.IPv6 != "N/A" {
++		t.Fatalf("pending public IP = %v", status.PublicIP)
 +	}
 +}

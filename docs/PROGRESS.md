@@ -2,6 +2,40 @@
 
 日期：2026-10-02。
 
+## 高與中高優先效能優化（2026-10-02）
+
+- 後端外部 IP 改為非阻塞背景查詢；IPv4／IPv6 共用 3 秒期限、最多兩個並行請求，每個服務實例只查一次並保留結果至核心重啟，避免沒有 IPv6 時新增週期性對外請求。CPU 型號／頻率背景載入，Android 成功結果快取 30 分鐘、失敗 1 分鐘；磁碟容量／使用量快取 30 秒。僅明確 `os.ErrPermission` 的受限系統統計退避 5 分鐘，保留可讀取的動態統計、流量記帳與告警原有 2 秒節奏。
+- frp 設定採延後產生 TOML、僅複製修改分支；初次載入、匯入及切換表單在背景解析，儲存、驗證及切換文字模式在背景輸出。未修改的原始文字與註解保持原樣。
+- 表單改為逐區塊／規則的 lazy items；記憶體內穩定規則 ID 不寫入設定。畫面外的展開狀態、無效輸入及錯誤保留；刪除規則只清除該規則草稿。
+- 新增模型／表單狀態單元測試、非同步編輯與大設定實機案例，以及相同合成設定的基準／新版量測。未新增依賴、未修改正式資料庫或 frp 設定。
+
+### 已完成的驗證
+
+- 最終 `./scripts/build-core.sh` 通過，包含固定來源、官方資產／Go 模組驗證、3x-ui 與 frpc 前端 build、Android arm64 原生核心 build；Gradle `verifyCore` 通過。
+- 後端修改範圍 gofmt、service `go vet`、8 項 race tests 與 patch 對乾淨上游正向／目前工作區反向套用檢查通過。最終完整 Go suite 已執行，修改套件及其他套件通過，只有既有 Discord `TestGatewayRequestedHeartbeatDoesNotRaceTicker` 出現 `broken pipe`；單獨重跑五次仍有一次 `unexpected EOF`，未修改無關套件，完整 Go suite 不記為全數通過。
+- 開發中的 11 項相關實機測試與 lint 通過，涵蓋近 1 MiB 設定、模式切換、畫面外無效輸入保留及未儲存返回確認。最終完整套件結果如下。
+
+- 最終 `:app:ktlintFormat`、`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:connectedDebugAndroidTest` 通過。JVM XML 確認 23 項、0 failures／errors；Android lint 0 errors／warnings，保留既有 2 個 hints。
+- 使用 `io.github.xraydroid.validation` 在 Pixel 9 Pro XL／Android 17 執行完整 suite，XML 確認 32 項、31 通過、1 行動網路不可用 skipped、0 failures／errors。Gradle 結尾進度一度顯示 33／32，計數採 testcase XML。涵蓋 frp TCP／UDP 轉發、背景與異常清理、Wi-Fi TCP／UDP DNS、面板登入、VLESS 入站管理、背景服務、核心 SIGKILL 清理／重啟及資料保留；fixture 已停止，僅移除本輪 USB reverse 17000／18080。
+
+- 正式 `:app:assembleDebug` 通過，metadata 確認 application ID `io.github.xraydroid`；`adb install -r` 成功並保留既有資料，`am start -W` 為 COLD／Status ok。首頁實際啟動顯示「等待指定網路」，原使用者指定網路目前不可用，未更改選擇或回退系統路由；停止後回到「準備就緒」，與測試前相同。正式套件這次只確認更新、開啟與等待／停止流程，核心執行與登入成功證據來自隔離驗證 suite。
+- 最終首頁已擷取視覺證據，位於 `/private/tmp/xraydroid-perf-home-final.png`；未開啟正式 frp 設定或讀取後端日誌。APK：`app/build/outputs/apk/debug/app-debug.apk`。測試 APK 與 fixture 不作為正式交付。
+
+### 同裝置合成效能量測
+
+- Pixel 9 Pro XL／Android 17／arm64，debug build，基準為本輪修改前 HEAD 與舊核心；相同合成設定、2 次暖身、每組 7 次取中位數。以下時間均為 ms，`30 次修改` 是模型操作，並非 30 次完整 UI 操作。
+
+| 規則數 | 修改前 30 次修改 | 新版 30 次修改 | 新版單次輸出 TOML |
+| --- | ---: | ---: | ---: |
+| 10 | 9.688 | 0.873 | 0.287 |
+| 100 | 44.919 | 0.879 | 2.157 |
+| 500 | 194.884 | 0.946 | 10.238 |
+
+- 500 條規則連續修改加最後一次輸出的總計由約 194.887 ms 降至 11.184 ms（約減少 94%）；工作主要移至明確輸出邊界。解析 500 條規則約 95.9 → 101.7 ms，沒有改善宣稱，但已移出主執行緒。
+- 100 條規則、7 次欄位輸入加 `waitForIdle` 中位數約 183.95 → 183.07 ms，受測試同步節奏影響，不能宣稱整體輸入延遲明顯降低。
+- 在程序存活時重設並擷取 `dumpsys gfxinfo`：同一組 7 次輸入基準 39 frames／10 janky（25.64%）、新版 41／6（14.63%）；P95 57 → 28 ms、P99 125 → 40 ms。這是小樣本單次觀察，未視為穩定幀率、耗電或整體吞吐改善證明。只保留合成 `XrayDroidPerf` 訊息，不讀取使用者設定或後端 runtime logs。
+- 尚未量測 release build、長時間耗電、原生核心整體 CPU 比例、真實大型使用者設定或所有 Android／OEM。外部 IP 有可能在 3 秒期限內無結果而顯示 `N/A`，直到核心重啟才重新查詢。
+
 ## Android 虛擬機啟動（2026-10-02）
 
 - 提交前追加驗證：`:app:ktlintFormat`、`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 通過；另外以 `:app:testDebugUnitTest --rerun` 實際重新執行完整 JVM suite，XML 確認 19 項、0 failures／errors。既有格式、lint 分析與編譯工作為 UP-TO-DATE，未宣稱全部重新分析。此時 `emulator-5554` 已不在線，本次沒有再次取得 runtime 證據；上一輪實際啟動、核心 PID、面板 HTTP 200 與截圖結果仍為本次文件的驗證依據。

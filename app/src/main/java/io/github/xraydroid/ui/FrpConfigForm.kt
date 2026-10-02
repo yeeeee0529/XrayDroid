@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -150,11 +153,21 @@ private fun validFieldShapes(fields: List<FrpField>, get: (String) -> Any?): Boo
 class FrpFormState {
     internal val rawInputs = mutableStateMapOf<String, String>()
     internal val errors = mutableStateMapOf<String, Boolean>()
+    internal val expandedSections = mutableStateMapOf<String, Boolean>()
+    internal val newRuleTypes = mutableStateMapOf<String, String>()
     val isValid: Boolean get() = errors.isEmpty()
+
+    internal fun removeRuleInputs(prefix: String) {
+        rawInputs.keys.filter { it.startsWith("$prefix/") }.forEach { rawInputs.remove(it) }
+        errors.keys.filter { it.startsWith("$prefix/") }.forEach { errors.remove(it) }
+        expandedSections.keys.filter { it == prefix || it.startsWith("$prefix/") }.forEach { expandedSections.remove(it) }
+    }
 
     fun clear() {
         rawInputs.clear()
         errors.clear()
+        expandedSections.clear()
+        newRuleTypes.clear()
     }
 }
 
@@ -166,14 +179,34 @@ fun FrpConfigForm(
     onValidityChange: (Boolean) -> Unit = {},
     formState: FrpFormState = remember { FrpFormState() }
 ) {
-    // 無效數字保留在記憶體；切換模式或儲存前必須先修正。
     val valid = formState.isValid
     LaunchedEffect(valid) { onValidityChange(valid) }
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        frpConfigFormItems(document, enabled, onChange, formState)
+    }
+}
+
+fun LazyListScope.frpConfigFormItems(
+    document: FrpConfigDocument,
+    enabled: Boolean,
+    onChange: (FrpConfigDocument) -> Unit,
+    formState: FrpFormState
+) {
+    // 草稿與展開狀態存在列表外，離開可見範圍不會遺失輸入。
+    val valid = formState.isValid
     val edit: (String, Any?) -> Unit = { path, value -> onChange(document.set(path, value)) }
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    item(key = "frp/common/0") {
         Text("留空使用 frpc 預設值。其他進階設定會保留在同一份 TOML 中。", style = MaterialTheme.typography.bodySmall)
-        FrpSection("基本設定") { FrpFields(connectionFields, document::get, edit, enabled, "common", formState) }
-        FrpSection("驗證") {
+    }
+    item(key = "frp/common/1") {
+        FrpSection(
+            "基本設定",
+            formState,
+            "common/connection"
+        ) { FrpFields(connectionFields, document::get, edit, enabled, "common", formState) }
+    }
+    item(key = "frp/common/2") {
+        FrpSection("驗證", formState, "common/auth") {
             FrpFields(listOf(choice("auth.method", "驗證方式", "token", "oidc")), document::get, edit, enabled, "common", formState)
             if ((document.get("auth.method") as? String ?: "token") == "oidc") {
                 FrpFields(oidcFields, document::get, edit, enabled, "common", formState)
@@ -187,7 +220,9 @@ fun FrpConfigForm(
                 }
             }
         }
-        FrpSection("傳輸設定") {
+    }
+    item(key = "frp/common/3") {
+        FrpSection("傳輸設定", formState, "common/transport") {
             FrpFields(transportFields, document::get, edit, enabled, "common", formState)
             if (document.get("transport.protocol") == "quic") {
                 FrpFields(
@@ -204,8 +239,12 @@ fun FrpConfigForm(
                 )
             }
         }
-        FrpSection("TLS 設定") { FrpFields(tlsFields, document::get, edit, enabled, "common", formState) }
-        FrpSection("其他設定") {
+    }
+    item(key = "frp/common/4") {
+        FrpSection("TLS 設定", formState, "common/tls") { FrpFields(tlsFields, document::get, edit, enabled, "common", formState) }
+    }
+    item(key = "frp/common/5") {
+        FrpSection("其他設定", formState, "common/other") {
             FrpFields(
                 listOf(
                     FrpField("natHoleStunServer", "STUN 伺服器", hint = "例如 stun.easyvoip.com:3478"),
@@ -220,36 +259,45 @@ fun FrpConfigForm(
                 formState
             )
         }
-        listOf("proxies" to "轉發規則", "visitors" to "訪客規則").forEach { (kind, title) ->
-            val rules = document.rules(kind)
-            Text(title, style = MaterialTheme.typography.titleLarge)
-            var newType by remember(kind) { mutableStateOf(if (kind == "proxies") "tcp" else "stcp") }
-            FrpChoice("新增規則協定", newType, if (kind == "proxies") proxyTypes else visitorTypes, enabled) { newType = it }
-            OutlinedButton(onClick = { onChange(document.addRule(kind, newType)) }, enabled = enabled && valid) { Text("新增$title") }
-            rules.forEachIndexed { index, rule ->
-                key(kind, index, rule["type"]) {
-                    val type = rule["type"] as? String ?: "tcp"
-                    FrpSection("${rule["name"] ?: "未命名"} · ${type.uppercase()}") {
-                        val get: (String) -> Any? = { path -> readRule(rule, path) }
-                        val set: (String, Any?) -> Unit = { path, value -> onChange(document.updateRule(kind, index, path, value)) }
-                        Text("規則協定為 ${type.uppercase()}；需要另一種協定時請新增規則。", style = MaterialTheme.typography.bodySmall)
-                        FrpFields(ruleFields(kind, type), get, set, enabled, "$kind/$index", formState)
-                        if (kind == "proxies") {
-                            FrpSection("傳輸、負載平衡與健康檢查") {
-                                FrpFields(proxyTransportFields, get, set, enabled, "$kind/$index", formState)
-                            }
-                        }
-                        TextButton(onClick = {
-                            // 刪除後索引會移動，禁止帶有無效草稿時刪除其他規則。
-                            formState.clear()
-                            formState.clear()
-                            onChange(document.removeRule(kind, index))
-                        }, enabled = enabled && valid) { Text("刪除此規則") }
-                    }
+    }
+    listOf("proxies" to "轉發規則", "visitors" to "訪客規則").forEach { (kind, title) ->
+        val rules = document.rules(kind)
+        item(key = "frp/$kind/add") {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(title, style = MaterialTheme.typography.titleLarge)
+                val newType = formState.newRuleTypes[kind] ?: if (kind == "proxies") "tcp" else "stcp"
+                FrpChoice("新增規則協定", newType, if (kind == "proxies") proxyTypes else visitorTypes, enabled) {
+                    formState.newRuleTypes[kind] = it
                 }
+                OutlinedButton(onClick = { onChange(document.addRule(kind, newType)) }, enabled = enabled && valid) { Text("新增$title") }
             }
         }
-        if (!valid) Text("請修正所有無效數字後再切換模式或儲存。", color = MaterialTheme.colorScheme.error)
+        itemsIndexed(
+            rules,
+            key = { index, _ -> "frp/$kind/${document.ruleId(kind, index)}" },
+            contentType = { _, _ -> "frp-rule" }
+        ) { index, rule ->
+            val type = rule["type"] as? String ?: "tcp"
+            val prefix = "$kind/${document.ruleId(kind, index)}"
+            FrpSection("${rule["name"] ?: "未命名"} · ${type.uppercase()}", formState, prefix) {
+                val get: (String) -> Any? = { path -> readRule(rule, path) }
+                val set: (String, Any?) -> Unit = { path, value -> onChange(document.updateRule(kind, index, path, value)) }
+                Text("規則協定為 ${type.uppercase()}；需要另一種協定時請新增規則。", style = MaterialTheme.typography.bodySmall)
+                FrpFields(ruleFields(kind, type), get, set, enabled, prefix, formState)
+                if (kind == "proxies") {
+                    FrpSection("傳輸、負載平衡與健康檢查", formState, "$prefix/transport") {
+                        FrpFields(proxyTransportFields, get, set, enabled, prefix, formState)
+                    }
+                }
+                TextButton(onClick = {
+                    formState.removeRuleInputs(prefix)
+                    onChange(document.removeRule(kind, index))
+                }, enabled = enabled) { Text("刪除此規則") }
+            }
+        }
+    }
+    if (!valid) {
+        item(key = "frp/invalid") { Text("請修正所有無效欄位後再切換模式或儲存。", color = MaterialTheme.colorScheme.error) }
     }
 }
 
@@ -310,11 +358,11 @@ private fun readRule(rule: Map<String, Any>, path: String): Any? {
 }
 
 @Composable
-private fun FrpSection(title: String, content: @Composable () -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
+private fun FrpSection(title: String, state: FrpFormState, id: String, content: @Composable () -> Unit) {
+    val expanded = state.expandedSections[id] ?: false
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            TextButton(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxWidth()) {
+            TextButton(onClick = { state.expandedSections[id] = !expanded }, modifier = Modifier.fillMaxWidth()) {
                 Text("${if (expanded) "▾" else "▸"} $title", style = MaterialTheme.typography.titleMedium)
             }
             if (expanded) content()

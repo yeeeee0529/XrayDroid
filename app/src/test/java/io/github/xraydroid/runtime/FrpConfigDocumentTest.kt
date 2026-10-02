@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -117,6 +118,55 @@ class FrpConfigDocumentTest {
         repeat(3) { document = document.removeRule("visitors", 0) }
         assertTrue(document.rules("visitors").isEmpty())
         assertFalse(document.values.containsKey("visitors"))
+    }
+
+    @Test
+    fun editingDefersSerializationAndSharesUntouchedRuleData() {
+        val original = FrpConfigDocument.parse(
+            """
+            serverAddr = "example.com"
+            [[proxies]]
+            name = "first"
+            type = "tcp"
+            remotePort = 6000
+            [proxies.plugin]
+            type = "http_proxy"
+            [[proxies]]
+            name = "second"
+            type = "udp"
+            remotePort = 6001
+            """.trimIndent()
+        )
+        var edited = original
+        repeat(30) { edited = edited.updateRule("proxies", 0, "remotePort", 7000L + it) }
+        assertFalse(original.isSourceMaterialized)
+        assertFalse(edited.isSourceMaterialized)
+        assertSame(original.rules("proxies")[1], edited.rules("proxies")[1])
+        assertSame(original.rules("proxies")[0]["plugin"], edited.rules("proxies")[0]["plugin"])
+        val source = edited.source
+        assertTrue(edited.isSourceMaterialized)
+        assertSame(source, edited.source)
+        assertEquals(edited.values, FrpConfigDocument.parse(source).values)
+    }
+
+    @Test
+    fun ruleIdentitiesSurviveRenameAndDeletionWithoutBeingSerialized() {
+        val original = FrpConfigDocument.parse("").addRule("proxies", "tcp").addRule("proxies", "tcp")
+        val first = original.ruleId("proxies", 0)
+        val second = original.ruleId("proxies", 1)
+        assertNotEquals(first, second)
+        val renamed = original.updateRule("proxies", 1, "name", "renamed")
+        assertEquals(second, renamed.ruleId("proxies", 1))
+        val removed = renamed.removeRule("proxies", 0)
+        assertEquals(second, removed.ruleId("proxies", 0))
+        val added = removed.addRule("proxies", "tcp")
+        assertEquals(second, added.ruleId("proxies", 0))
+        assertNotEquals(first, added.ruleId("proxies", 1))
+        assertNotEquals(second, added.ruleId("proxies", 1))
+        assertEquals(
+            setOf("name", "type", "localIP", "localPort", "remotePort"),
+            FrpConfigDocument.parse(added.source).rules("proxies")[0].keys
+        )
     }
 
     @Test
