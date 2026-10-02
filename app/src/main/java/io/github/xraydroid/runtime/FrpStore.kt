@@ -28,6 +28,7 @@ data class FrpState(
     val loaded: Boolean = false,
     val revision: Long = 0,
     val allowUnsafeTokenCommand: Boolean = false,
+    val connection: FrpConnectionStatus = FrpConnectionStatus(),
     val proxies: List<FrpProxyStatus> = emptyList()
 )
 
@@ -169,11 +170,18 @@ object FrpStore {
     }
 
     internal fun transition(phase: FrpPhase, message: String) {
-        mutableState.update { it.copy(phase = phase, message = message, proxies = emptyList()) }
+        mutableState.update { it.copy(phase = phase, message = message, connection = FrpConnectionStatus(), proxies = emptyList()) }
     }
 
-    internal fun updateProxies(proxies: List<FrpProxyStatus>) {
-        mutableState.update { it.copy(proxies = proxies) }
+    internal fun updateRuntime(status: FrpRuntimeStatus?) {
+        mutableState.update {
+            // 停止與輪詢可能交錯；停止後不可被晚到的結果標示為已連線。
+            if (it.phase == FrpPhase.RUNNING) {
+                it.copy(connection = status?.connection ?: FrpConnectionStatus(), proxies = status?.proxies.orEmpty())
+            } else {
+                it
+            }
+        }
     }
 
     internal fun message(message: String) {

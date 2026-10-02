@@ -2,6 +2,31 @@
 
 日期：2026-10-02。
 
+## frp 實際連線狀態（2026-10-02）
+
+- 原本「用戶端運作中」只代表 frpc 程序與本機狀態 API 可用；首次登入失敗或沒有代理時列表可能為空，無法確認是否登入 frps。改為在 frp 頁最上方顯示實際登入狀態、固定分類診斷與嘗試次數；通知同步連線狀態。
+- `patches/frp-android.patch` 加入有驗證保護的 `/api/xraydroid/status`，從登入流程與控制連線取得 connecting／connected／retrying／reconnecting，使用原子快照與控制物件鎖；已關閉的控制連線不回報已連線。首次登入失敗保持程序運作並由上游重試；沒有代理或只使用訪客也能回報成功登入。
+- 新端點只輸出固定錯誤分類與代理名稱／型別／狀態／遠端位址，不傳回伺服器原始錯誤或權杖。DNS、拒絕連線、逾時、無可達網路、TLS 與登入驗證準備使用型別判斷；frps 明確拒絕登入單獨分類，不靠原始錯誤文字猜測一定是權杖錯誤。
+- `FrpService` 約每 2 秒輪詢，無法取得狀態時清除已連線與舊代理結果；`FrpStore` 忽略停止後晚到的輪詢結果。監控不再每次覆寫設定儲存提示。`FrpScreen` 分開顯示 frps 登入與代理啟用摘要，代理狀態改為繁體中文；代理已啟用仍不代表本機目標服務可達。
+- 受影響檔案：`runtime/FrpConnectionStatus.kt`、`FrpService.kt`、`FrpStore.kt`、`ui/FrpScreen.kt`、`patches/frp-android.patch`（內含 Go test）、`FrpLifecycleTest.kt`、新增 `FrpConnectionScreenTest.kt`／`FrpConnectionStatusTest.kt`、三份 README、CHANGELOG 與本紀錄。未修改使用者設定、資料庫或原始後端日誌。
+
+### 驗證範圍
+
+- 使用本機 frps fixture 與隔離 `io.github.xraydroid.validation` 套件，沒有讀取使用者 frps 設定或權杖，也沒有向使用者伺服器測試登入。因此本輪確認的是狀態展示缺失與安全診斷，使用者既有連線失敗的確切原因仍待更新後的實際狀態確認。
+- 斷線展示依核心控制連線偵測／心跳逾時及輪詢，不承諾網路中斷瞬間更新；TLS／DNS 等分類有 unit test，但未逐一建置所有協定／OIDC／TLS 組合的真機錯誤 fixture。不同 OEM 與長時間網路中斷尚未驗證。
+
+### 實際驗證
+
+- `GOCACHE="$PWD/.core-cache/go-build" npm_config_cache="$PWD/.core-cache/npm" ./scripts/build-frpc.sh` 通過：frpc／frps 官方前端 build 與 vue-tsc、Go 模組驗證、Android arm64 frpc 及 host 驗證工具 build 均成功；最終 frpc ELF LOAD 段皆為 16 KB 對齊。3x-ui／Xray 核心未改動，沿用既有 build。上游既有 glob deprecated／Rollup annotation 警告不阻擋 build。
+- frp 官方 Makefile 範圍完整 unit suite `go test -mod=readonly ./assets/... ./cmd/... ./client/... ./server/... ./pkg/...` 通過；新增 3 項 Go test 驗證錯誤分類、端點驗證保護、初次失敗／重連與已關閉控制連線不回報成功。最終相關 `go test -race ... ./client -run 'TestApp|TestControlSessionDialerDialLoginError' -count=1` 與 `go vet ./client/... ./cmd/frpc/sub` 通過；gofmt、修補反向檢查與 `git diff --check` 通過。首次 sandbox 執行受本機通訊端／npm 網路權限阻擋，允許相同驗證操作後通過；未把首次受限結果記為成功。
+- Pixel 9 Pro XL／Android 17 首輪 5 項 frp 相關 test 全數通過：無代理成功登入、初次拒絕連線、無代理登入遭拒、安全原因、斷線清除舊代理並重連、TCP／UDP 真實往返、獨立啟停、重複啟動／重啟／崩潰恢復、權杖子程序清理與頂端卡片狀態切換。最終核心補上與原有 API 相同的代理遠端位址格式後，再跑相同 5 項全數通過。
+- 完整隔離裝置 suite 已執行一次，依 XML testcase 子節點計算為 **26 項：24 通過、1 失敗、1 略過、0 errors**；Gradle 終端曾印出 Finished 27 tests，以 XML 為準。frp 全部、設定／返回導覽、面板生命週期與網路切換 test 通過。唯一失敗為未修改的 `NetworkBindingTest.wifiCoreUsesSelectedNetworkForTcpAndUdp`，TCP 出站比對通過後，在 `verifyUdpDns:137` 接收透過指定 Wi-Fi 的 `1.1.1.1:53` UDP DNS 回應逾時；行動網路不可用略過。該 Wi-Fi test 單獨重跑一次仍於相同位置 UDP 接收逾時；未修改未涉及 frp 的 Xray 網路實作或裝置網路政策。與前輪同一功能有失敗紀錄，但本輪錯誤為逾時而非 EPERM；不能直接視為相同原因，也不宣稱完整 suite 全數通過。
+- 測試前正式三個核心皆未運作；frps fixture 已以 Ctrl+C 正常停止，僅移除本輪 adb reverse 17000／18080。未啟動使用者 frps 連線，也未擷取 frp 設定畫面。
+- 最終 `:app:ktlintFormat`、`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 通過；Kotlin 編譯與裝置 test 編譯通過，JVM **17 項全數通過**（新增 4 項）；Android lint 0 errors／warnings，保留既有 2 項 AutoboxingStateCreation hints。完整裝置 suite 失敗會中止同次 Gradle 工作，因此最終靜態檢查與 JVM suite 另行完成，未沿用舊報表宣稱成功。
+- 隔離測試後重新 build 正式 APK，output-metadata 與 aapt2 皆確認 `io.github.xraydroid`；`adb install -r` 成功並保留正式資料，`am start -W` 回報 COLD／Status ok，主程序 PID 存在。validation 套件與本輪 adb reverse 均確認不存在。APK：`app/build/outputs/apk/debug/app-debug.apk`；正式 frpc 保持未啟動，使用者需在 frp 頁啟動後查看既有連線的實際診斷。
+
+## Android 預測返回手勢整合（2026-10-02）
+
 Android predictive back（預測返回手勢）整合：Manifest 加入 `android:enableOnBackInvokedCallback="true"`（API 33 以下由系統忽略，lint 以 `tools:targetApi` 標註預期行為）；MainActivity 改用 activity-compose 1.11.0 的 `PredictiveBackHandler`，返回層級 home → settings → network／frp。返回手勢期間以疊層預覽目標頁：前景頁隨手勢縮放至 0.9 並加圓角與陰影，背景目標頁從 0.95 放大到 1.0；commit 時切換頁面、cancel 時前景頁動畫回復。首頁的返回不攔截，交給系統至桌面動畫。frp 頁的 `BackHandler` 改為僅在草稿有未存變更時啟用，此時返回先彈確認對話框（決策型返回，無預覽過場）；乾淨草稿時交給 predictive 過場。按鍵返回（含無障礙 GLOBAL_ACTION_BACK）以 0 個手勢事件完成，同樣進入 commit 分支，既有導覽行為不變。FLAG_SECURE 的 frp 頁在手勢過程仍為前景頁，擷取保護不變。
 
 - 受影響檔案：`MainActivity.kt`（返回層級、疊層過場）、`ui/FrpScreen.kt`（BackHandler 條件）、`AndroidManifest.xml`（屬性）、CHANGELOG、三份 README、本紀錄。未修改原生核心、服務生命週期或網路實作。

@@ -102,7 +102,7 @@ class FrpService : Service() {
         if (existing?.isAlive == true) {
             monitor(existing, ticket, startId)
             monitorStatus(existing, ticket)
-            updateNotification("frp 程序執行中")
+            updateNotification(FrpStore.state.value.connection.phase.title)
             return
         }
         FrpStore.transition(FrpPhase.STARTING, "正在驗證並啟動 frpc")
@@ -142,9 +142,9 @@ class FrpService : Service() {
             if (statuses != null) {
                 processGroup = OwnedProcesses.groupFor(layout.executable.absolutePath)
                 check(processGroup != null) { "FRP process session is unavailable" }
-                FrpStore.transition(FrpPhase.RUNNING, "frpc 程序執行中；各代理連線狀態如下")
-                FrpStore.updateProxies(statuses)
-                updateNotification("frp 程序執行中")
+                FrpStore.transition(FrpPhase.RUNNING, "")
+                FrpStore.updateRuntime(statuses)
+                updateNotification(FrpStore.state.value.connection.phase.title)
                 monitor(child, ticket, startId)
                 monitorStatus(child, ticket)
                 return
@@ -162,17 +162,18 @@ class FrpService : Service() {
                 delay(2000)
                 val latest = pollStatus(port, authorization)
                 if (generation.get() == ticket && process === child && child.isAlive) {
-                    FrpStore.updateProxies(latest.orEmpty())
-                    FrpStore.message(
-                        if (latest == null) "frpc 程序執行中，暫時無法取得代理狀態" else "frpc 程序執行中；各代理連線狀態如下"
-                    )
+                    val previous = FrpStore.state.value.connection.phase
+                    FrpStore.updateRuntime(latest)
+                    if (FrpStore.state.value.connection.phase != previous) {
+                        updateNotification(FrpStore.state.value.connection.phase.title)
+                    }
                 }
             }
         }
     }
 
-    private fun pollStatus(port: Int, authorization: String): List<FrpProxyStatus>? = runCatching {
-        val connection = URL("http://127.0.0.1:$port/api/status").openConnection() as HttpURLConnection
+    private fun pollStatus(port: Int, authorization: String): FrpRuntimeStatus? = runCatching {
+        val connection = URL("http://127.0.0.1:$port/api/xraydroid/status").openConnection() as HttpURLConnection
         try {
             connection.connectTimeout = 1000
             connection.readTimeout = 1000
@@ -180,23 +181,33 @@ class FrpService : Service() {
             connection.setRequestProperty("Authorization", authorization)
             check(connection.responseCode == 200) { "FRP status endpoint unavailable" }
             val json = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
-            buildList {
-                json.keys().forEach { type ->
-                    val entries = json.optJSONArray(type) ?: return@forEach
-                    repeat(entries.length()) { index ->
-                        val entry = entries.getJSONObject(index)
-                        // 不保留 err 欄位；它可能含伺服器回傳的敏感資訊。
-                        add(
-                            FrpProxyStatus(
-                                entry.optString("name"),
-                                type,
-                                entry.optString("status"),
-                                entry.optString("remote_addr")
-                            )
-                        )
-                    }
-                }
+            val status = json.getJSONObject("connection")
+            val phase = when (status.getString("state")) {
+                "connecting" -> FrpConnectionPhase.CONNECTING
+                "connected" -> FrpConnectionPhase.CONNECTED
+                "retrying" -> FrpConnectionPhase.RETRYING
+                "reconnecting" -> FrpConnectionPhase.RECONNECTING
+                else -> FrpConnectionPhase.UNKNOWN
             }
+            val entries = json.getJSONArray("proxies")
+            val proxies = buildList {
+                repeat(entries.length()) { index ->
+                    val entry = entries.getJSONObject(index)
+                    add(
+                        FrpProxyStatus(
+                            entry.getString("name"),
+                            entry.getString("type"),
+                            entry.getString("status"),
+                            entry.optString("remote_addr")
+                        )
+                    )
+                }
+            }.sortedWith(compareBy({ it.type }, { it.name }))
+            // 僅保留固定錯誤代碼；未知分類不顯示原始值。
+            val error = status.optString("error").takeIf {
+                it in setOf("dns", "refused", "timeout", "unreachable", "tls", "authentication", "login_rejected", "connection")
+            }.orEmpty()
+            FrpRuntimeStatus(FrpConnectionStatus(phase, error, status.getInt("attempts")), proxies)
         } finally {
             connection.disconnect()
         }

@@ -197,7 +197,9 @@ class FrpLifecycleTest {
             SystemClock.sleep(2500)
             assertTrue("Repeated Start must retain status polling", proxiesReady())
             assertTrue(probe("stop"))
-            await("Disconnected proxies must stop reporting running") { !proxiesReady() }
+            await("Disconnected control must report reconnecting and clear stale proxies") {
+                FrpStore.state.value.connection.phase == FrpConnectionPhase.RECONNECTING && FrpStore.state.value.proxies.isEmpty()
+            }
             assertEquals("frpc must keep retrying after frps disconnects", FrpPhase.RUNNING, FrpStore.state.value.phase)
             assertTrue(probe("start"))
             await("frpc must reconnect without a manual restart") { proxiesReady() && probe("tcp") && probe("udp") }
@@ -242,8 +244,65 @@ class FrpLifecycleTest {
         }
     }
 
+    @Test
+    fun initialConnectionFailureIsVisibleWithoutAnyProxies() = runBlocking(Dispatchers.IO) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        check(context.packageName.endsWith(".validation")) { "FRP verification requires an isolated validation application ID" }
+        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        FrpStore.initialize(context)
+        await("Settings must load") { FrpStore.state.value.loaded }
+        val original = FrpStore.state.value.config
+        val port = ServerSocket(0, 0, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+        try {
+            assertTrue(FrpStore.saveConfig(context, "serverAddr = '127.0.0.1'\nserverPort = $port\n"))
+            FrpService.dispatch(context, FrpService.ACTION_START)
+            await("Failed initial login must report refused and keep retrying without proxies") {
+                FrpStore.state.value.let {
+                    it.phase == FrpPhase.RUNNING && it.connection.phase == FrpConnectionPhase.RETRYING &&
+                        it.connection.error == "refused" && it.connection.attempts > 0 && it.proxies.isEmpty()
+                }
+            }
+        } finally {
+            FrpService.dispatch(context, FrpService.ACTION_STOP)
+            await("Stop must clear connection state") {
+                FrpStore.state.value.let { it.phase == FrpPhase.STOPPED && it.connection.phase == FrpConnectionPhase.UNKNOWN }
+            }
+            if (original.isNotBlank()) FrpStore.saveConfig(context, original)
+        }
+    }
+
+    @Test
+    fun loginWithNoProxiesDistinguishesSuccessAndServerRejection() = runBlocking(Dispatchers.IO) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        check(context.packageName.endsWith(".validation")) { "FRP verification requires an isolated validation application ID" }
+        assumeTrue("Run the local frps fixture", probe("health"))
+        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        FrpStore.initialize(context)
+        await("Settings must load") { FrpStore.state.value.loaded }
+        val original = FrpStore.state.value.config
+        val config = "serverAddr = '127.0.0.1'\nserverPort = 17000\n"
+        try {
+            assertTrue(FrpStore.saveConfig(context, config))
+            FrpService.dispatch(context, FrpService.ACTION_START)
+            await("Successful login must be reported even with no proxies") {
+                FrpStore.state.value.let { it.connection.phase == FrpConnectionPhase.CONNECTED && it.proxies.isEmpty() }
+            }
+            assertTrue(FrpStore.saveConfig(context, config + "auth.token = 'invalid-validation-placeholder'\n"))
+            FrpService.dispatch(context, FrpService.ACTION_RESTART)
+            await("Rejected login must report a safe reason without proxies") {
+                FrpStore.state.value.let {
+                    it.connection.phase == FrpConnectionPhase.RETRYING && it.connection.error == "login_rejected" && it.proxies.isEmpty()
+                }
+            }
+        } finally {
+            FrpService.dispatch(context, FrpService.ACTION_STOP)
+            await("Final cleanup must stop frpc") { FrpStore.state.value.phase == FrpPhase.STOPPED }
+            if (original.isNotBlank()) FrpStore.saveConfig(context, original)
+        }
+    }
+
     private fun proxiesReady(): Boolean = FrpStore.state.value.let { state ->
-        state.phase == FrpPhase.RUNNING &&
+        state.phase == FrpPhase.RUNNING && state.connection.phase == FrpConnectionPhase.CONNECTED &&
             state.proxies.count { it.name in setOf("android-tcp", "android-udp") && it.status == "running" } == 2
     }
 

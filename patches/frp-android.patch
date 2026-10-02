@@ -1,3 +1,83 @@
+diff --git a/client/api_router.go b/client/api_router.go
+index 82b7304..67c8345 100644
+--- a/client/api_router.go
++++ b/client/api_router.go
+@@ -33,6 +33,7 @@ func (svr *Service) registerRouteHandlers(helper *httppkg.RouterRegisterHelper)
+ 	subRouter := helper.Router.NewRoute().Subrouter()
+ 	subRouter.Use(helper.AuthMiddleware)
+ 	subRouter.Use(httppkg.NewRequestLogger)
++	subRouter.HandleFunc("/api/xraydroid/status", httppkg.MakeHTTPHandlerFunc(svr.appStatus)).Methods(http.MethodGet)
+ 	subRouter.HandleFunc("/api/reload", httppkg.MakeHTTPHandlerFunc(apiController.Reload)).Methods(http.MethodGet)
+ 	subRouter.HandleFunc("/api/stop", httppkg.MakeHTTPHandlerFunc(apiController.Stop)).Methods(http.MethodPost)
+ 	subRouter.HandleFunc("/api/status", httppkg.MakeHTTPHandlerFunc(apiController.Status)).Methods(http.MethodGet)
+diff --git a/client/control_session.go b/client/control_session.go
+index e3ed27f..f395a7b 100644
+--- a/client/control_session.go
++++ b/client/control_session.go
+@@ -71,7 +71,7 @@ func (d *controlSessionDialer) Dial(previousRunID string) (*SessionContext, erro
+ 
+ 	loginMsg, err := d.buildLoginMsg(previousRunID)
+ 	if err != nil {
+-		return nil, err
++		return nil, appLoginError{code: "authentication", err: err}
+ 	}
+ 
+ 	loginResult, err := d.exchangeLogin(conn, loginMsg)
+@@ -80,7 +80,7 @@ func (d *controlSessionDialer) Dial(previousRunID string) (*SessionContext, erro
+ 	}
+ 	loginRespMsg := loginResult.resp
+ 	if loginRespMsg.Error != "" {
+-		return nil, errors.New(loginRespMsg.Error)
++		return nil, appLoginError{code: "login_rejected", err: errors.New(loginRespMsg.Error)}
+ 	}
+ 
+ 	var controlRW io.ReadWriter = conn
+diff --git a/client/service.go b/client/service.go
+index 7964050..7f11f3f 100644
+--- a/client/service.go
++++ b/client/service.go
+@@ -110,7 +110,8 @@ func setServiceOptionsDefault(options *ServiceOptions) error {
+ 
+ // Service is the client service that connects to frps and provides proxy services.
+ type Service struct {
+-	ctlMu sync.RWMutex
++	connectionStatus atomic.Pointer[appConnectionStatus]
++	ctlMu            sync.RWMutex
+ 	// Stores gracefulShutdownDuration independently from ctlMu, because the
+ 	// graceful shutdown wait may hold ctlMu for an arbitrary duration.
+ 	gracefulShutdownDuration atomic.Int64
+@@ -309,6 +310,7 @@ func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginE
+ 	xl := xlog.FromContextSafe(svr.ctx)
+ 
+ 	loginFunc := func() (bool, error) {
++		svr.beginConnectionAttempt()
+ 		xl.Infof("try to connect to server...")
+ 		dialer := &controlSessionDialer{
+ 			ctx:              svr.ctx,
+@@ -320,6 +322,7 @@ func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginE
+ 		}
+ 		sessionCtx, err := dialer.Dial(svr.runID)
+ 		if err != nil {
++			svr.failConnectionAttempt(err)
+ 			xl.Warnf("connect to server error: %v", err)
+ 			if firstLoginExit {
+ 				svr.cancel(cancelErr{Err: err})
+@@ -340,6 +343,7 @@ func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginE
+ 		if err != nil {
+ 			sessionCtx.Conn.Close()
+ 			sessionCtx.Connector.Close()
++			svr.failConnectionAttempt(err)
+ 			xl.Errorf("new control error: %v", err)
+ 			return false, err
+ 		}
+@@ -352,6 +356,7 @@ func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginE
+ 			svr.ctl.Close()
+ 		}
+ 		svr.ctl = ctl
++		svr.completeConnectionAttempt()
+ 		svr.ctlMu.Unlock()
+ 		return true, nil
+ 	}
 diff --git a/cmd/frpc/sub/root.go b/cmd/frpc/sub/root.go
 index 8a0f184..082fbb5 100644
 --- a/cmd/frpc/sub/root.go
@@ -14,6 +94,7 @@ index 8a0f184..082fbb5 100644
  		return fmt.Errorf("failed to set config source: %w", err)
 diff --git a/cmd/frpc/main_android.go b/cmd/frpc/main_android.go
 new file mode 100644
+index 0000000..d7024a3
 --- /dev/null
 +++ b/cmd/frpc/main_android.go
 @@ -0,0 +1,27 @@
@@ -46,6 +127,7 @@ new file mode 100644
 +}
 diff --git a/cmd/frpc/sub/runtime_android.go b/cmd/frpc/sub/runtime_android.go
 new file mode 100644
+index 0000000..861746f
 --- /dev/null
 +++ b/cmd/frpc/sub/runtime_android.go
 @@ -0,0 +1,31 @@
@@ -82,6 +164,7 @@ new file mode 100644
 +}
 diff --git a/cmd/frpc/sub/runtime_other.go b/cmd/frpc/sub/runtime_other.go
 new file mode 100644
+index 0000000..3cc6935
 --- /dev/null
 +++ b/cmd/frpc/sub/runtime_other.go
 @@ -0,0 +1,9 @@
@@ -93,4 +176,260 @@ new file mode 100644
 +
 +func applyAndroidRuntimeConfig(_ *v1.ClientCommonConfig) error {
 +	return nil
++}
+diff --git a/client/app_status.go b/client/app_status.go
+new file mode 100644
+index 0000000..cec0be1
+--- /dev/null
++++ b/client/app_status.go
+@@ -0,0 +1,127 @@
++package client
++
++import (
++	"crypto/tls"
++	"crypto/x509"
++	"errors"
++	"net"
++	"syscall"
++
++	httppkg "github.com/fatedier/frp/pkg/util/http"
++)
++
++// 僅輸出固定分類，不把伺服器回應、權杖或原始錯誤傳給 App。
++type appLoginError struct {
++	code string
++	err  error
++}
++
++func (e appLoginError) Error() string { return e.err.Error() }
++func (e appLoginError) Unwrap() error { return e.err }
++
++type appConnectionStatus struct {
++	State         string `json:"state"`
++	Error         string `json:"error"`
++	Attempts      int    `json:"attempts"`
++	EverConnected bool   `json:"-"`
++}
++
++func (svr *Service) currentConnectionStatus() appConnectionStatus {
++	if status := svr.connectionStatus.Load(); status != nil {
++		return *status
++	}
++	return appConnectionStatus{State: "connecting"}
++}
++
++func (svr *Service) beginConnectionAttempt() {
++	status := svr.currentConnectionStatus()
++	status.Attempts++
++	if status.EverConnected {
++		status.State = "reconnecting"
++	}
++	svr.connectionStatus.Store(&status)
++}
++
++func (svr *Service) failConnectionAttempt(err error) {
++	status := svr.currentConnectionStatus()
++	status.State = "retrying"
++	if status.EverConnected {
++		status.State = "reconnecting"
++	}
++	status.Error = appConnectionError(err)
++	svr.connectionStatus.Store(&status)
++}
++
++func (svr *Service) completeConnectionAttempt() {
++	status := svr.currentConnectionStatus()
++	status.State, status.Error, status.EverConnected = "connected", "", true
++	svr.connectionStatus.Store(&status)
++}
++
++func appConnectionError(err error) string {
++	var login appLoginError
++	var dns *net.DNSError
++	var cert *tls.CertificateVerificationError
++	var unknownCA x509.UnknownAuthorityError
++	var hostname x509.HostnameError
++	var invalidCert x509.CertificateInvalidError
++	var record tls.RecordHeaderError
++	var network net.Error
++	switch {
++	case errors.As(err, &login):
++		return login.code
++	case errors.As(err, &dns):
++		return "dns"
++	case errors.As(err, &cert), errors.As(err, &unknownCA), errors.As(err, &hostname), errors.As(err, &invalidCert), errors.As(err, &record):
++		return "tls"
++	case errors.Is(err, syscall.ECONNREFUSED):
++		return "refused"
++	case errors.As(err, &network) && network.Timeout():
++		return "timeout"
++	case errors.Is(err, syscall.ENETUNREACH), errors.Is(err, syscall.EHOSTUNREACH):
++		return "unreachable"
++	default:
++		return "connection"
++	}
++}
++
++func (svr *Service) appStatus(_ *httppkg.Context) (any, error) {
++	// 與控制物件替換共用鎖，關閉的舊控制連線不再回報已連線。
++	svr.ctlMu.RLock()
++	defer svr.ctlMu.RUnlock()
++	connection := svr.currentConnectionStatus()
++	if connection.State == "connected" {
++		if svr.ctl == nil {
++			connection.State = "reconnecting"
++		} else {
++			select {
++			case <-svr.ctl.Done():
++				connection.State = "reconnecting"
++			default:
++			}
++		}
++	}
++	type proxyStatus struct {
++		Name          string `json:"name"`
++		Type          string `json:"type"`
++		Status        string `json:"status"`
++		RemoteAddress string `json:"remote_addr"`
++	}
++	proxies := make([]proxyStatus, 0)
++	if connection.State == "connected" && svr.ctl != nil {
++		for _, status := range svr.ctl.pm.GetAllProxyStatus() {
++			remoteAddress := ""
++			if status.Err == "" {
++				remoteAddress = status.RemoteAddr
++				if status.Type == "tcp" || status.Type == "udp" {
++					remoteAddress = svr.common.ServerAddr + remoteAddress
++				}
++			}
++			proxies = append(proxies, proxyStatus{status.Name, status.Type, status.Phase, remoteAddress})
++		}
++	}
++	return struct {
++		Connection appConnectionStatus `json:"connection"`
++		Proxies    []proxyStatus       `json:"proxies"`
++	}{connection, proxies}, nil
++}
+diff --git a/client/app_status_test.go b/client/app_status_test.go
+new file mode 100644
+index 0000000..297b5ef
+--- /dev/null
++++ b/client/app_status_test.go
+@@ -0,0 +1,117 @@
++package client
++
++import (
++	"crypto/tls"
++	"crypto/x509"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"syscall"
++	"testing"
++
++	"github.com/fatedier/frp/pkg/config/source"
++	v1 "github.com/fatedier/frp/pkg/config/v1"
++	httppkg "github.com/fatedier/frp/pkg/util/http"
++	netpkg "github.com/fatedier/frp/pkg/util/net"
++	"github.com/gorilla/mux"
++)
++
++func TestAppConnectionErrorDoesNotExposeRawErrors(t *testing.T) {
++	tests := []struct {
++		err  error
++		code string
++	}{
++		{&net.DNSError{Err: "private.example", Name: "private.example"}, "dns"},
++		{fmt.Errorf("private address: %w", syscall.ECONNREFUSED), "refused"},
++		{syscall.ENETUNREACH, "unreachable"},
++		{&net.DNSError{IsTimeout: true}, "dns"},
++		{&net.OpError{Err: syscall.ETIMEDOUT}, "timeout"},
++		{&tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}, "tls"},
++		{appLoginError{"login_rejected", errors.New("private-token")}, "login_rejected"},
++		{appLoginError{"authentication", errors.New("private-token")}, "authentication"},
++		{errors.New("private-token"), "connection"},
++	}
++	for _, tc := range tests {
++		if got := appConnectionError(tc.err); got != tc.code {
++			t.Errorf("error code = %q, want %q", got, tc.code)
++		}
++	}
++}
++
++func TestAppStatusRequiresAuthenticationAndReportsFailedLogin(t *testing.T) {
++	svr, err := NewService(ServiceOptions{
++		Common:                 &v1.ClientCommonConfig{},
++		ConfigSourceAggregator: source.NewAggregator(source.NewConfigSource()),
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	router := mux.NewRouter()
++	svr.registerRouteHandlers(&httppkg.RouterRegisterHelper{
++		Router:         router,
++		AuthMiddleware: netpkg.NewHTTPAuthMiddleware("fixture-user", "fixture-password").Middleware,
++	})
++	request := httptest.NewRequest(http.MethodGet, "/api/xraydroid/status", nil)
++	response := httptest.NewRecorder()
++	router.ServeHTTP(response, request)
++	if response.Code != http.StatusUnauthorized {
++		t.Fatalf("unauthenticated status = %d", response.Code)
++	}
++	svr.beginConnectionAttempt()
++	svr.failConnectionAttempt(appLoginError{"login_rejected", errors.New("private-token")})
++	request.SetBasicAuth("fixture-user", "fixture-password")
++	response = httptest.NewRecorder()
++	router.ServeHTTP(response, request)
++	if response.Code != http.StatusOK {
++		t.Fatalf("authenticated status = %d", response.Code)
++	}
++	if strings.Contains(response.Body.String(), "private-token") {
++		t.Fatal("raw login error leaked")
++	}
++	var payload struct {
++		Connection appConnectionStatus
++		Proxies    []any
++	}
++	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
++		t.Fatal(err)
++	}
++	if payload.Connection.State != "retrying" || payload.Connection.Error != "login_rejected" || payload.Connection.Attempts != 1 || len(payload.Proxies) != 0 {
++		t.Fatalf("unexpected safe status: %+v", payload)
++	}
++	// 重試開始時保留上次原因，避免畫面每次重試都閃回未知狀態。
++	svr.beginConnectionAttempt()
++	if got := svr.currentConnectionStatus(); got.Error != "login_rejected" || got.Attempts != 2 {
++		t.Fatalf("lost failure: %+v", got)
++	}
++}
++
++func TestAppStatusNeverReportsClosedControlConnected(t *testing.T) {
++	svr := &Service{ctl: &Control{doneCh: make(chan struct{})}}
++	svr.beginConnectionAttempt()
++	svr.completeConnectionAttempt()
++	close(svr.ctl.doneCh)
++	payload, err := svr.appStatus(nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	encoded, err := json.Marshal(payload)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !strings.Contains(string(encoded), `"state":"reconnecting"`) || !strings.Contains(string(encoded), `"proxies":[]`) {
++		t.Fatalf("closed controller status: %s", encoded)
++	}
++	svr.beginConnectionAttempt()
++	svr.failConnectionAttempt(syscall.ECONNREFUSED)
++	if got := svr.currentConnectionStatus(); got.State != "reconnecting" || got.Error != "refused" {
++		t.Fatalf("lost reconnect state: %+v", got)
++	}
++	svr.completeConnectionAttempt()
++	if got := svr.currentConnectionStatus(); got.State != "connected" || got.Error != "" {
++		t.Fatalf("failure survived recovery: %+v", got)
++	}
 +}

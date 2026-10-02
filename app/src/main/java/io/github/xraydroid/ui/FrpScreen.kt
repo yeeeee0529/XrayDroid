@@ -32,9 +32,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.github.xraydroid.runtime.FrpConfigDocument
+import io.github.xraydroid.runtime.FrpConnectionPhase
 import io.github.xraydroid.runtime.FrpPhase
 import io.github.xraydroid.runtime.FrpState
 import io.github.xraydroid.runtime.FrpStore
+import io.github.xraydroid.runtime.frpProxyStatusLabel
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -135,12 +137,28 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                             FrpPhase.STOPPED -> "已停止"
                             FrpPhase.VALIDATING -> "正在驗證設定"
                             FrpPhase.STARTING -> "正在啟動"
-                            FrpPhase.RUNNING -> "用戶端運作中"
+                            FrpPhase.RUNNING -> state.connection.phase.title
                             FrpPhase.STOPPING -> "正在停止"
                             FrpPhase.ERROR -> "用戶端發生問題"
                         },
                         style = MaterialTheme.typography.headlineSmall
                     )
+                    if (state.phase == FrpPhase.RUNNING) {
+                        Text(state.connection.detail)
+                        if (state.connection.attempts > 0 && state.connection.phase != FrpConnectionPhase.CONNECTED) {
+                            Text("已嘗試連線 ${state.connection.attempts} 次", style = MaterialTheme.typography.labelMedium)
+                        }
+                        if (state.connection.phase == FrpConnectionPhase.CONNECTED) {
+                            val running = state.proxies.count { it.status == "running" }
+                            Text(
+                                if (state.proxies.isEmpty()) {
+                                    "目前沒有代理狀態；僅使用訪客規則時不會列出代理。"
+                                } else {
+                                    "代理已啟用 $running / ${state.proxies.size}；代理啟用不代表本機目標服務可用。"
+                                }
+                            )
+                        }
+                    }
                     if (state.message.isNotBlank()) Text(state.message)
                     Text("獨立於 3x-ui 與 Xray；使用 Android 系統預設網路。")
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -161,7 +179,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
                         Text("${proxy.name} · ${proxy.type}", style = MaterialTheme.typography.titleMedium)
-                        Text(proxy.status)
+                        Text(frpProxyStatusLabel(proxy.status))
                         if (proxy.remoteAddress.isNotBlank()) Text(proxy.remoteAddress)
                     }
                 }
