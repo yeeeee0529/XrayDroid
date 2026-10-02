@@ -2,6 +2,31 @@
 
 日期：2026-10-02。
 
+## Android 虛擬機啟動（2026-10-02）
+
+- 提交前追加驗證：`:app:ktlintFormat`、`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 通過；另外以 `:app:testDebugUnitTest --rerun` 實際重新執行完整 JVM suite，XML 確認 19 項、0 failures／errors。既有格式、lint 分析與編譯工作為 UP-TO-DATE，未宣稱全部重新分析。此時 `emulator-5554` 已不在線，本次沒有再次取得 runtime 證據；上一輪實際啟動、核心 PID、面板 HTTP 200 與截圖結果仍為本次文件的驗證依據。
+
+- 依使用者要求安裝官方 Android Emulator 37.2.12，建立可見 Pixel 9 AVD `XrayDroid_API_36`，使用 AOSP Android 16／API 36／arm64-v8a 系統映像（revision 2）。SDK、AVD 與工具資料均位於忽略的 `.tools/` 目錄；以 `emulator-5554` 明確指定目標，沒有安裝或修改實體手機。
+- 首次 Google APIs 映像啟動受磁碟空間阻擋；僅移除本輪新安裝的該映像並替換較小的官方 AOSP 映像。資料分割區設為 6 GiB、RAM 3072 MiB，停用 snapshot。最終 `sys.boot_completed = 1`，實際版本為 Android 16、ABI 為 arm64-v8a。
+- `JAVA_HOME=... ANDROID_HOME=... GRADLE_USER_HOME=... ./gradlew :app:assembleDebug --console=plain` 通過（`verifyCore` 通過，使用既有已建置的三個原生核心）。`adb -s emulator-5554 install -r .../app-debug.apk` 成功；正式 application ID 為 `io.github.xraydroid`，`am start -W` 為 COLD／Status ok。
+- 從新 AVD 首頁啟動服務並允許通知；UI tree 與實際截圖確認「服務運作中」，`libxui.so` 與 `libxray.so` PID 存在。面板透過本機 adb forward `28553 → 2053` 回傳 HTTP 200 與 HTML；AOSP 內建 `org.chromium.webview_shell` 可處理 HTTP VIEW intent，但本輪沒有完成面板登入視覺驗證。保留模擬器、核心與這條本機面板 forward 供使用者操作，未匯入實體手機資料或 frps 權杖。
+- 本輪只新增進度紀錄與忽略的本機工具／AVD；沒有修改 App 或原生來源，未重跑 lint、unit test、instrumentation suite 或原生 core build。`git diff --check` 通過。截圖與一次性 UI tree 位於 `/tmp/xraydroid-emulator-*`。
+
+## 8087 VLESS／Vision／Reality 與 frp 實機診斷（2026-10-02）
+
+- 使用者回報區網與 `hk.boygirl.net:8087` 均無法連線。USB 連上 Pixel 9 Pro XL 時，正式套件僅主程序存在，`dumpsys activity services io.github.xraydroid` 為空；首頁顯示「準備就緒」，3x-ui／Xray 與 frpc 均未啟動。依本次調試授權從原生頁面啟動既有服務，沒有更改入站、轉發規則、出站網路或原用戶憑證。
+- 面板確認 8087 入站已啟用，監聽位址為空（區網實際可連入），協定 VLESS／TCP／Reality，原用戶啟用且 flow 為 `xtls-rprx-vision`、無到期或流量上限；Reality 目標為 `www.cloudflare.com:443`。啟動後 `192.168.1.111:8087` TCP 與 TLS 1.3 交握成功，Reality 回落 HTTPS 回應 `HTTP/1.1 200 OK`；手機端 TCP 測試亦確認本機 8087 與 Reality 目標 443 可達。這些結果排除本次測試區網路徑遭防火牆阻擋，不能概括其他網路。
+- 正式 frpc 成功登入 frps，但畫面顯示「代理已啟用 0 / 1」；`vless · tcp` 狀態為代理啟動失敗。表單只核對非秘密欄位，確認 `localIP = 127.0.0.1`、`localPort = 8087`、`remotePort = 8087`。Mac 與手機連線 `hk.boygirl.net:8087` 均失敗，Mac 得到 connection refused；DNS 本次解析為單一 IPv4。登入成功不等於 TCP 代理註冊成功。
+- 本機隔離驗證：host frps 僅監聽 `127.0.0.1:17001`，代理埠僅允許 `18087`；USB reverse 將手機 17001 導向 fixture。從正式 App 相同 UID 執行第二個測試 frpc，單一 TCP 規則轉送 `127.0.0.1:8087` 至 host `127.0.0.1:18087`，不使用使用者 frps 權杖，不取代正式 frpc。經這條路徑的 Reality 回落 TLS／HTTPS 亦得到 200。
+- 完整 VLESS 傳輸：以固定來源與現有 Android 修補的 Xray v26.6.27 編譯臨時 macOS 測試核心；在既有 8087 暫新增自產 UUID 的測試用戶，使用面板 Reality 公開欄位，設定 `xtls-rprx-vision` 與 chrome fingerprint。用戶端設定僅透過 stdin 傳入，不輸出原用戶 UUID 或伺服器私鑰。SOCKS5h 發出真實 HTTPS 請求，**USB 直連、區網直連、本機隔離 frp 三條路徑皆 HTTP 200、curl exit 0**。finally 刪除測試用戶，API 確認測試用戶不存在，原本 1 位用戶仍保留。
+- 清理與最終狀態：停止本輪 host frps／手機測試 frpc／host 測試 Xray，僅移除本輪 forward 28053／28087 與 reverse 17001；adb forward／reverse 清單為空，17001／18087／18088／28053／28087 皆無監聽。正式 `libxui.so`、`libxray.so`、`libfrpc.so` PID 仍存在，手機回到原生首頁。未讀取後端 runtime logs，未更動原入站、原用戶或轉發規則。
+
+### 限制與尚待處理
+
+- 本機診斷後，使用者確認遠端代理啟動失敗的根因為代理名稱重複。此為使用者回報，沒有朋友的 frps 主機或管理介面存取權，因此未獨立查驗伺服器端原因，也未修改朋友伺服器；尚未在改名後重新驗證 `hk.boygirl.net:8087` 的完整轉發。
+- 完整 VLESS 測試使用臨時用戶，證明既有入站的 Vision／Reality 與出站功能；未取得或驗證其他設備實際匯入的原用戶連線設定。區網用戶端須以手機可達位址連線，遠端用戶端仍需先解決 frps 代理啟動失敗。
+- 僅新增本紀錄；沒有修改 App、上游來源、patch 或套件，未重跑 Gradle lint／test／APK build。上述成功結果來自本輪實際手機及 HTTPS 傳輸，不沿用前輪 suite 作為本次證據。
+
 ## frp 登入前斷線的獨立診斷（2026-10-02）
 
 - 使用者回報 frp 回報「連線或交握失敗」。實際追查：伺服器在客戶端送出登入訊息後未回應即關閉連線（客戶端得到 `EOF`），`appConnectionError` 落回泛用的 `connection` 分類，真正原因無從得知。
