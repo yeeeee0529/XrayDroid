@@ -49,8 +49,8 @@ internal class PanelManagementProbe {
     }
 
     private fun awaitDiskStatus(): JSONObject {
-        // 面板 HTTP 就緒時，第一筆背景統計可能尚未完成。
-        val deadline = SystemClock.elapsedRealtime() + 10000
+        // 首筆統計會等待外部 IP 探測；11 次查詢各可逾時 3 秒，需涵蓋採樣與排程時間。
+        val deadline = SystemClock.elapsedRealtime() + 45000
         while (SystemClock.elapsedRealtime() < deadline) {
             val status = request("/panel/api/server/status").optJSONObject("obj")
             if (status != null) return status.getJSONObject("disk")

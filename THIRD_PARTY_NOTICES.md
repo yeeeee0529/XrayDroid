@@ -3,6 +3,7 @@
 - **3x-ui v3.8.5** — [官方來源](https://github.com/MHSanaei/3x-ui/tree/v3.8.5)，commit `7ef22f94c950ff09f0870e2295fa65ad5968742c`，[GPL-3.0](https://github.com/MHSanaei/3x-ui/blob/v3.8.5/LICENSE)。Android 修改完整保存在 `patches/3x-ui-android.patch`；建置流程保留上游來源於 `upstream/3x-ui`。
 - **Xray-core v26.6.27** — [官方原始碼](https://github.com/XTLS/Xray-core/tree/v26.6.27)，[MPL-2.0](https://github.com/XTLS/Xray-core/blob/v26.6.27/LICENSE)。固定 commit `45cf2898ab12e97a55dd8f1f3d78d903340bdc9e`，套用 `patches/xray-android-network.patch` 後編譯 Android arm64 核心。官方發行檔用於地理資料與授權，下載 SHA256 固定於建置腳本。
 - **frp v0.71.0 (frpc)** — [官方來源](https://github.com/fatedier/frp/tree/v0.71.0)，commit `4a23aa181c1d7e28eecaa8216024ed753b9d27c8`，[Apache-2.0](https://github.com/fatedier/frp/blob/v0.71.0/LICENSE)。Android 修改保存在 `patches/frp-android.patch`；完整 frpc 與內嵌管理介面由固定原始碼建置，授權保存在 App 資產。frps 僅供主機驗證使用，不封裝至 APK。
+- **tomlj 1.1.1** — [官方來源](https://github.com/tomlj/tomlj)，[Apache-2.0](https://github.com/tomlj/tomlj/blob/main/LICENSE)。用於表單與 TOML 雙模式的完整語法解析；傳遞依賴包含 [ANTLR 4.11.1 runtime／BSD-3-Clause](https://github.com/antlr/antlr4/blob/4.11.1/LICENSE.txt) 與 [Checker Qual 3.21.2／MIT](https://github.com/typetools/checker-framework)。三者授權原文均保存在 App 資產。
 - **AndroidX / Jetpack Compose** — [Android Open Source Project](https://android.googlesource.com/platform/frameworks/support/)，[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)。
 - **Kotlin / kotlinx.coroutines** — [JetBrains Kotlin](https://github.com/JetBrains/kotlin)、[kotlinx.coroutines](https://github.com/Kotlin/kotlinx.coroutines)，Apache-2.0。
 

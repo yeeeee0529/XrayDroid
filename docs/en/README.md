@@ -67,9 +67,9 @@ Management-panel connections and inbound listeners retain their original routing
 
 Settings → frp provides the complete frpc v0.71.0 client for an external frps; the phone does not run frps. It has a separate foreground service and notification, so starting or stopping it does not control 3x-ui / Xray. frpc follows Android system routing, including a system VPN; Xray's selected outbound interface does not apply to frpc.
 
-1. Expand the starter form, enter the frps host, port, token, and TCP forwarding settings, generate the template, and confirm replacement. Alternatively edit or import TOML directly.
-2. The complete `frpc.toml` is authoritative. The starter form generates a replacement template and does not merge advanced settings. Import and template replacement require confirmation.
-3. Validate checks syntax and fields. Save validates before atomically writing private app data; invalid settings do not replace the saved file.
+1. Choose Form or TOML mode. Expand the grouped connection, authentication, transport, TLS, and miscellaneous settings to edit them. The form supports Token/OIDC, TCP/KCP/QUIC/WebSocket/WSS transports, and metadata.
+2. Add, edit, and remove TCP, UDP, HTTP, HTTPS, STCP, SUDP, XTCP, and TCPMUX proxy rules, or STCP, SUDP, and XTCP visitors. Each type exposes its domain, path, secret, listener, traversal, and fallback settings. Choose the protocol when adding a rule; add a new rule to use another protocol.
+3. Both modes share one complete TOML draft. Entering Form mode parses the draft; invalid syntax or incompatible field structures keep the original text in TOML mode. Switching without editing preserves the original text. Actual form edits normalize formatting and remove comments while retaining untouched fields, plugins, visitors, and includes. Use TOML for plugin and other advanced options without form controls. Invalid numeric input remains in the form and blocks switching, validation, saving, and startup until corrected. Import replacement still requires confirmation. Validate and Save use the official strict frpc verifier; saving writes private app data atomically only after success.
 4. Start and restart first validate and save the draft. Saving while running requires a restart to apply. Closing settings does not stop frpc.
 5. The proxy list displays native proxy statuses. “Client running” means the process and local status endpoint are available, rather than confirming that every proxy is connected. Stop through the frp page or its notification.
 
@@ -118,6 +118,8 @@ python3 scripts/frp-validation-server.py
 adb reverse --remove tcp:17000
 adb reverse --remove tcp:18080
 ```
+
+The form uses tomlj 1.1.1 for complete TOML parsing rather than splitting configuration strings. Compose UI tests verify mode switching and draft retention. Test-only Espresso is pinned to 3.7.0 for Android 17 input injection compatibility.
 
 frpc device tests cover TCP/UDP round trips, reconnects, independent lifecycle, invalid-save retention, support-file import, and cleanup of external token commands after stop or parent death. This does not establish that every frp protocol or plugin has been individually tested.
 Use the isolated validation package on a development device. Stop the regular package service first to release the fixed panel port; its data is preserved. Observed checks and limitations are recorded in [Progress](../PROGRESS.md).

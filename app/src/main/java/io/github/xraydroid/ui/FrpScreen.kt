@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -31,9 +30,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import io.github.xraydroid.runtime.FrpConfigDocument
 import io.github.xraydroid.runtime.FrpPhase
 import io.github.xraydroid.runtime.FrpState
 import io.github.xraydroid.runtime.FrpStore
@@ -53,12 +51,18 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
     var feedback by remember { mutableStateOf("") }
     var confirmLeave by remember { mutableStateOf(false) }
     var pendingTemplate by remember { mutableStateOf<String?>(null) }
-    var showStarter by remember { mutableStateOf(false) }
+    var document by remember { mutableStateOf(parseFormDocument(state.config)) }
+    var formMode by remember { mutableStateOf(document != null) }
+    val formState = remember { FrpFormState() }
+    val formValid = formState.isValid
     val busy = working || state.phase in setOf(FrpPhase.VALIDATING, FrpPhase.STARTING, FrpPhase.STOPPING)
-    val dirty = draft != state.config
+    val dirty = draft != state.config || !formValid
+    val canSave = !busy && initialized && formValid
     LaunchedEffect(state.loaded) {
         if (state.loaded && !initialized) {
             draft = state.config
+            document = parseFormDocument(draft)
+            formMode = document != null
             initialized = true
         }
     }
@@ -141,11 +145,11 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                     if (state.phase == FrpPhase.RUNNING || state.phase == FrpPhase.STARTING) {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            OutlinedButton(onClick = { saveThen(onRestart) }, enabled = !busy && initialized) { Text("重新啟動 frpc") }
+                            OutlinedButton(onClick = { saveThen(onRestart) }, enabled = canSave) { Text("重新啟動 frpc") }
                             Button(onClick = onStop, enabled = !working) { Text("停止 frpc") }
                         }
                     } else {
-                        Button(onClick = { saveThen(onStart) }, enabled = !busy && initialized) { Text("啟動 frpc") }
+                        Button(onClick = { saveThen(onStart) }, enabled = canSave) { Text("啟動 frpc") }
                     }
                 }
             }
@@ -163,24 +167,73 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
             }
         }
         item {
-            Text("完整 TOML 設定", style = MaterialTheme.typography.titleLarge)
-            Text("支援 frpc 的代理、訪客、驗證、傳輸與進階設定；驗證成功才會儲存及啟動。")
-            Text(
-                "App 會管理 webServer 本機狀態端點、丟棄原始日誌，並覆寫 loginFailExit = false 以持續重連；這些執行時設定不會修改已儲存的 TOML。",
-                style = MaterialTheme.typography.bodySmall
-            )
-            OutlinedTextField(
-                value = draft,
-                onValueChange = {
-                    draft = it
-                    feedback = ""
-                },
-                enabled = initialized && !busy,
-                label = { Text("frpc.toml") },
-                minLines = 12,
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
-            )
+            Text("配置模式", style = MaterialTheme.typography.titleLarge)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (formMode) {
+                    Button(onClick = {}, enabled = initialized && !busy, modifier = Modifier.weight(1f)) { Text("表單配置") }
+                } else {
+                    OutlinedButton(
+                        onClick = {
+                            val parsed = parseFormDocument(draft)
+                            if (parsed == null) {
+                                feedback = "無法切換至表單，請檢查 TOML 語法與欄位型別；原有草稿已保留。"
+                            } else {
+                                document = parsed
+                                formMode = true
+                                formState.clear()
+                                feedback = ""
+                            }
+                        },
+                        enabled = initialized && !busy,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("表單配置") }
+                }
+                if (formMode) {
+                    OutlinedButton(
+                        onClick = {
+                            formMode = false
+                            formState.clear()
+                        },
+                        enabled = initialized && !busy && formValid,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("TOML 配置") }
+                } else {
+                    Button(onClick = {}, enabled = initialized && !busy, modifier = Modifier.weight(1f)) { Text("TOML 配置") }
+                }
+            }
+            Text("兩種模式共用同一份草稿；表單修改會重新排版 TOML 並移除註解，其他設定值會保留。", style = MaterialTheme.typography.bodySmall)
+        }
+        if (formMode) {
+            item {
+                document?.let { current ->
+                    FrpConfigForm(
+                        document = current,
+                        enabled = initialized && !busy,
+                        onChange = {
+                            document = it
+                            draft = it.source
+                            feedback = ""
+                        },
+                        formState = formState
+                    )
+                }
+            }
+        } else {
+            item {
+                Text("完整 TOML 設定", style = MaterialTheme.typography.titleLarge)
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = {
+                        draft = it
+                        feedback = ""
+                    },
+                    enabled = initialized && !busy,
+                    label = { Text("frpc.toml") },
+                    minLines = 12,
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
+                )
+            }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -196,11 +249,12 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                             }
                         }
                     },
-                    enabled = !busy && initialized
+                    enabled = canSave
                 ) { Text("驗證設定") }
-                Button(onClick = { saveThen() }, enabled = !busy && initialized) { Text("儲存設定") }
+                Button(onClick = { saveThen() }, enabled = canSave) { Text("儲存設定") }
             }
             if (feedback.isNotBlank()) Text(feedback, modifier = Modifier.padding(top = 12.dp))
+            if (!formValid) Text("請先修正表單中的欄位，再切換模式、驗證或儲存。", color = MaterialTheme.colorScheme.error)
             if (dirty) Text("草稿尚未儲存。", style = MaterialTheme.typography.labelMedium)
         }
         item {
@@ -237,12 +291,6 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                 }
             }
         }
-        item {
-            TextButton(onClick = { showStarter = !showStarter }, enabled = !busy && initialized) {
-                Text(if (showStarter) "收合基本範本" else "建立基本範本")
-            }
-            if (showStarter) FrpStarter(enabled = !busy) { pendingTemplate = it }
-        }
     }
     if (confirmLeave) {
         AlertDialog(
@@ -266,6 +314,9 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
             confirmButton = {
                 TextButton(onClick = {
                     draft = replacement
+                    document = parseFormDocument(replacement)
+                    formMode = formMode && document != null
+                    formState.clear()
                     pendingTemplate = null
                     feedback = ""
                 }) { Text("取代草稿") }
@@ -275,70 +326,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
     }
 }
 
-@Composable
-private fun FrpStarter(enabled: Boolean, onGenerate: (String) -> Unit) {
-    var server by remember { mutableStateOf("") }
-    var serverPort by remember { mutableStateOf("7000") }
-    var token by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf("tcp-forward") }
-    var localAddress by remember { mutableStateOf("127.0.0.1") }
-    var localPort by remember { mutableStateOf("2053") }
-    var remotePort by remember { mutableStateOf("12053") }
-    val portKeyboard = KeyboardOptions(keyboardType = KeyboardType.Number)
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("此表單只產生一份連線與 TCP 轉發範本。其他協定與訪客請編輯完整 TOML。")
-        OutlinedTextField(server, { server = it }, label = { Text("frps 主機") }, enabled = enabled, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(serverPort, {
-            serverPort = it
-        }, label = { Text("frps 連接埠") }, enabled = enabled, keyboardOptions = portKeyboard, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(token, {
-            token = it
-        }, label = {
-            Text("驗證權杖（可留空）")
-        }, enabled = enabled, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(name, { name = it }, label = { Text("代理名稱") }, enabled = enabled, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(
-            localAddress,
-            { localAddress = it },
-            label = { Text("本機位址") },
-            enabled = enabled,
-            modifier = Modifier.fillMaxWidth()
-        )
-        OutlinedTextField(localPort, {
-            localPort = it
-        }, label = { Text("本機連接埠") }, enabled = enabled, keyboardOptions = portKeyboard, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(remotePort, {
-            remotePort = it
-        }, label = { Text("遠端連接埠") }, enabled = enabled, keyboardOptions = portKeyboard, modifier = Modifier.fillMaxWidth())
-        val valid = server.isNotBlank() && name.isNotBlank() && localAddress.isNotBlank() &&
-            listOf(serverPort, localPort, remotePort).all { value -> value.toIntOrNull()?.let { it in 1..65535 } == true }
-        Button(
-            onClick = {
-                onGenerate(
-                    "serverAddr = ${tomlString(server)}\nserverPort = ${serverPort.toInt()}\n" +
-                        (if (token.isNotEmpty()) "auth.method = \"token\"\nauth.token = ${tomlString(token)}\n" else "") +
-                        "\n[[proxies]]\nname = ${tomlString(name)}\ntype = \"tcp\"\n" +
-                        "localIP = ${tomlString(localAddress)}\nlocalPort = ${localPort.toInt()}\nremotePort = ${remotePort.toInt()}\n"
-                )
-            },
-            enabled = enabled && valid
-        ) { Text("產生範本") }
-    }
-}
-
-private fun tomlString(value: String): String = buildString {
-    append('"')
-    value.forEach { character ->
-        append(
-            when (character) {
-                '\\' -> "\\\\"
-                '"' -> "\\\""
-                '\n' -> "\\n"
-                '\r' -> "\\r"
-                '\t' -> "\\t"
-                else -> if (character.code < 32 || character.code == 127) "\\u%04x".format(character.code) else character.toString()
-            }
-        )
-    }
-    append('"')
-}
+private fun parseFormDocument(text: String): FrpConfigDocument? = runCatching {
+    require(text.toByteArray(Charsets.UTF_8).size <= FrpStore.MAX_CONFIG_BYTES) { "Configuration exceeds size limit" }
+    FrpConfigDocument.parse(text).takeIf(::canEditFrpForm)
+}.getOrNull()

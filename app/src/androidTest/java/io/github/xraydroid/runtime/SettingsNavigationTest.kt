@@ -47,14 +47,14 @@ class SettingsNavigationTest {
         assertTrue("Network controls must disappear after returning to settings", matchingNodes("重新偵測").isEmpty())
         clickText("frp")
         awaitText("frpc 用戶端")
-        awaitText("完整 TOML 設定")
+        awaitText("配置模式")
         assertTrue("frp must not display outbound network controls", matchingNodes("跟隨系統").isEmpty())
         assertTrue(
             "System Back action must return from frp to settings",
             instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
         )
         awaitText("出站網路")
-        assertTrue("frpc editor must disappear after leaving its subpage", matchingNodes("完整 TOML 設定").isEmpty())
+        assertTrue("frpc editor must disappear after leaving its subpage", matchingNodes("配置模式").isEmpty())
         clickText("返回首頁")
         awaitText("XrayDroid")
         awaitText("管理面板")

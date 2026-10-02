@@ -1,10 +1,34 @@
 # 進度與驗證紀錄
 
-日期：2026-10-01。
+日期：2026-10-02。
 
 首頁顯示修正：移除副標題，重新啟動按鈕改用狀態卡對應前景色與外框；Kotlin 編譯、ktlint 與 lint、APK build 通過。此次為純顯示變更，未新增測試；真機視覺複查仍受裝置鎖定限制。
 
 [專案首頁](../README.md) · [繁體中文](zh-TW/README.md) · [English](en/README.md)
+
+## frpc 表單／TOML 雙模式配置
+
+- 依 Lucky 參考畫面的設定分組，使用原生 Material 3 Expressive 可收合卡片。表單與 TOML 編輯同一份草稿，取代原本只能產生 TCP 範本的表單。
+- 表單涵蓋全部 8 種代理（TCP、UDP、HTTP、HTTPS、STCP、SUDP、XTCP、TCPMUX）及 3 種訪客（STCP、SUDP、XTCP），支援多筆新增／編輯／刪除、協定專屬欄位、傳輸、負載平衡、健康檢查、HTTP 標頭與中繼資料。新增規則時選擇協定，已建立規則不直接改型別，避免留下不相容欄位。
+- 伺服器連線提供全部 TCP／KCP／QUIC／WebSocket／WSS 傳輸、Token／OIDC、驗證範圍、TLS 憑證路徑、心跳、連線池、代理 URL、STUN、DNS 與 UDP 長度。依使用者要求省略虛擬網路 IP 與登入失敗退出表單欄位。
+- 使用 tomlj 1.1.1 完整解析 TOML，沒有以逐行字串比對取代解析器。未修改時保留原文與註解；實際表單修改後標準化排版並移除註解，但保留其他值、未知欄位、外掛、tokenSource、includes、含點的字面鍵與巢狀 table／array。語法或已知欄位結構不相容時留在 TOML 模式，原文保留。解析限制 1 MiB，深度超出堆疊容量時回報不含設定內容的錯誤。
+- 無效數字、空白／重複中繼資料名稱保留在畫面外層記憶體狀態，不因卡片收合或延遲列表處置而消失；修正前禁止模式切換、儲存與啟動。規則刪除清除依索引保存的暫存輸入，避免後續規則套到舊索引的草稿。設定不加入 Activity 儲存狀態，原有擷取保護、官方驗證與原子儲存不變。
+- 新增 Compose UI test；其傳遞 Espresso 舊版使用已移除的 InputManager.getInstance，Android 17 首輪無法操作 UI。依官方修正紀錄將 test-only Espresso 固定 3.7.0 後，測試正常執行。tomlj、ANTLR runtime、Checker Qual 授權原文加入 App 資產與第三方聲明。
+- 受影響檔案：`ui/FrpScreen.kt`、新增 `ui/FrpConfigForm.kt`、新增 `runtime/FrpConfigDocument.kt`、Gradle 相依設定、三個設定相關裝置 test（其中 SettingsNavigationTest 更新模式標題）、既有 PanelManagementProbe 等待時間、新增 JVM 設定 test、三份 README、CHANGELOG、第三方授權聲明／資產與本紀錄。未修改原生核心、服務生命週期或出站網路實作。
+
+### 實際驗證與限制
+
+- `:app:ktlintFormat`、最終 `:app:ktlintCheck :app:lintDebug :app:assembleDebug` 通過；Kotlin 主程式與裝置 test 編譯通過。Android lint 0 errors、0 warnings，保留既有 1 項 AutoboxingStateCreation hint。SDK 工具仍有非阻擋的 XML 版本提示。
+- 全部 JVM `:app:testDebugUnitTest` 已執行一次：13 項、0 failures、0 errors；其中新增 7 項設定解析／往返／進階欄位保留／全部規則類型／錯誤保密 test。
+- Pixel 9 Pro XL／Android 17：新增 4 項 official frpc 設定驗證與 5 項 Compose 畫面操作 test 全數通過。實際從表單新增全部 8+3 類型、編輯 HTTP 多網域、刪除規則、表單／TOML 往返、未修改原文保留、無效數字跨捲動保留與修正、無效語法／欄位結構保留均通過。開發中測試捲動無法找到已處置的列表項目，修正測試為先透過列表定位節點，再捲動到欄位；未藉此改動產品設定行為。
+- 完整隔離裝置 suite 實際執行一次，XML 結果為 **19 項：14 通過、3 失敗、2 略過、0 errors**。frpc TCP／UDP 真實往返、斷線重連、獨立啟停、外部權杖指令與父程序死亡清理、匯入／無效設定保留，以及設定導覽皆通過。測試使用既有本機 frps fixture 與 adb reverse 17000／18080。
+- 完整 suite 未全數通過：既有 `NetworkBindingTest.wifiCoreUsesSelectedNetworkForTcpAndUdp` 在 Android `Network.bindSocket` 回報 `Binding socket to network 100 failed: EPERM`；失敗發生於直接 Android 網路探針，在啟動受測 Xray 核心前。既有 `NetworkSwitchLifecycleTest.selectionRestartsCoreAndUnavailableNetworkStopsItUntilRecovery` 無法使 Wi-Fi 指定模式進入 RUNNING；既有 `ServerLifecycleTest.nativeServerSurvivesBackgroundAndRecoversFromPanelDeath` 的 `PanelManagementProbe.awaitDiskStatus` 等待儲存統計逾時。行動網路不可用及確切介面綁定項目略過。未修改裝置 VPN／網路政策、後端設定或無關的網路實作；未讀取後端原始日誌。
+- 三個既有失敗項目另針對其所屬 test classes 重跑，結果相同；未把重跑記為通過。使用者確認裝置目前開著熱點且修改過網卡 MAC 位址，列為目前環境條件；不據此宣稱已證明 EPERM 的唯一原因，也不關閉熱點或重設 MAC。
+- 另確認上游首次統計發布前同步依序查詢 6 個 IPv4／5 個 IPv6 外部服務，各次逾時 3 秒，原本 `PanelManagementProbe.awaitDiskStatus` 10 秒不足。僅將隔離裝置 test 的等待時間改為 45 秒，保留容量精確比對與完整面板操作；之後單獨 `ServerLifecycleTest` **1 項通過、0 failures、0 errors**，包含登入／VLESS 入站、背景、崩潰清理、重新啟動、停止與資料保留。未變更 App 或上游統計行為。完整 suite 的原始 19 項結果仍保留，不把單獨重跑合成全套通過。
+- 尚未完成目前熱點／MAC 環境下的指定 Wi-Fi 綁定與切換驗證；系統路由的 frpc TCP／UDP 與面板生命週期已有實際通過證據。
+- 最終正式套件 APK 的 application ID 實際確認為 `io.github.xraydroid`；`adb install -r` 更新成功並保留正式資料，`am start -W` 回報 COLD／Status ok，主程序 PID 實際存在。APK：`app/build/outputs/apk/debug/app-debug.apk`。驗證前正式核心未運作，因此更新後只開啟 App，不額外啟動使用者服務。frps fixture 已停止，僅此次新增的 adb reverse 17000／18080 已移除。
+- 原生核心與修補未改動，使用前輪已建置及驗證的三個核心，Gradle `verifyCore` 通過；此次未重跑原生 build 或 Go suite。
+- 全部協定的設定驗證不等於全部協定實際傳輸驗證；此輪實際傳輸仍以 TCP／UDP 為限。憑證檔案組合、OIDC 登入、不同 OEM、最大尺寸設定的表單輸入延遲與長時間連線仍未逐一驗證。
 
 ## Git 忽略規則與 GitHub 遠端
 
