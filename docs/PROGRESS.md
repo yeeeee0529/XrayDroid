@@ -2,6 +2,20 @@
 
 日期：2026-10-02。
 
+Android predictive back（預測返回手勢）整合：Manifest 加入 `android:enableOnBackInvokedCallback="true"`（API 33 以下由系統忽略，lint 以 `tools:targetApi` 標註預期行為）；MainActivity 改用 activity-compose 1.11.0 的 `PredictiveBackHandler`，返回層級 home → settings → network／frp。返回手勢期間以疊層預覽目標頁：前景頁隨手勢縮放至 0.9 並加圓角與陰影，背景目標頁從 0.95 放大到 1.0；commit 時切換頁面、cancel 時前景頁動畫回復。首頁的返回不攔截，交給系統至桌面動畫。frp 頁的 `BackHandler` 改為僅在草稿有未存變更時啟用，此時返回先彈確認對話框（決策型返回，無預覽過場）；乾淨草稿時交給 predictive 過場。按鍵返回（含無障礙 GLOBAL_ACTION_BACK）以 0 個手勢事件完成，同樣進入 commit 分支，既有導覽行為不變。FLAG_SECURE 的 frp 頁在手勢過程仍為前景頁，擷取保護不變。
+
+- 受影響檔案：`MainActivity.kt`（返回層級、疊層過場）、`ui/FrpScreen.kt`（BackHandler 條件）、`AndroidManifest.xml`（屬性）、CHANGELOG、三份 README、本紀錄。未修改原生核心、服務生命週期或網路實作。
+
+### 實際驗證與限制
+
+- `:app:ktlintFormat`、`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug`：通過。JVM test 13 項 0 failures；Android lint 0 errors、0 warnings，保留既有 1 項 AutoboxingStateCreation hint。
+- Pixel 9 Pro XL／Android 17 隔離完整裝置 suite（含 frps fixture 與 adb reverse 17000／18080）：**19 項：16 通過、2 失敗、2 略過、0 errors**。`SettingsNavigationTest`（含 frp→settings、settings→home 的系統返回）與 frp 表單／TOML／導覽、frpc TCP／UDP 真實往返、面板生命週期、統計等待均通過。
+- 2 項失敗為前輪已記錄的既有環境失敗，非本輪造成：`NetworkBindingTest.wifiCoreUsesSelectedNetworkForTcpAndUdp` 仍在 `Network.bindSocket` 回報 `EPERM`；`NetworkSwitchLifecycleTest.selectionRestartsCoreAndUnavailableNetworkStopsItUntilRecovery` 仍無法使 Wi-Fi 指定模式進入 RUNNING（使用者的熱點／修改 MAC 環境條件不變）。略過項目為行動網路不可用與裝置 suite 原有假設。
+- 手勢行為實機驗證（validation 套件，uiautomator 佐證）：設定頁右緣短滑（約 200px）取消後停留設定頁；完整滑動 commit 後回首頁；出站網路頁 commit 回設定索引（層級正確、未跳回首頁）；frp 乾淨草稿 commit 回設定索引；frp 輸入字元後按返回鍵彈出「捨棄未儲存的草稿？」，選「捨棄並返回」回設定索引。中間幀截圖因兩頁同為淺色背景，縮放過場的可見特徵以邊緣／中央條帶像素差異佐證（邊緣差異約 52–54、中央約 7–8），未做逐幀錄影。
+- frp 頁過場受 FLAG_SECURE 保護，無法截圖驗證（符合設計，與前輪一致）。
+- 正式套件 APK 的 application ID 實際確認為 `io.github.xraydroid`，`adb install -r` 更新成功並保留正式資料，`am start -W` 回報 Status ok，主程序 PID 存在；正式包中設定 → 手勢 commit 回首頁亦通過。驗證前正式服務未運作，更新後只開啟 App 未啟動使用者服務。frps fixture 已停止，兩個 adb reverse 已移除，validation 套件已解除安裝。
+- 尚未驗證：Android 14 及以下的系統 callback 動畫（僅 API 33+ 生效）、三鍵／兩鍵導覽模式的返回鍵畫面、RTL 配置下的過場視覺、不同 OEM 的手勢攔截差異。predictive back 動畫與 3x-ui 網頁面板無關。
+
 首頁顯示修正：移除副標題，重新啟動按鈕改用狀態卡對應前景色與外框；Kotlin 編譯、ktlint 與 lint、APK build 通過。此次為純顯示變更，未新增測試；真機視覺複查仍受裝置鎖定限制。
 
 [專案首頁](../README.md) · [繁體中文](zh-TW/README.md) · [English](en/README.md)

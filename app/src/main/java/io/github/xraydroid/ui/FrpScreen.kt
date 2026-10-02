@@ -67,7 +67,8 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
         }
     }
     val leave: () -> Unit = { if (dirty) confirmLeave = true else onBack() }
-    BackHandler { leave() }
+    // 有未存變更時返回先彈確認；乾淨時交給 MainActivity 的 predictive back 過場。
+    BackHandler(enabled = dirty) { leave() }
     fun saveThen(action: (() -> Unit)? = null) {
         working = true
         scope.launch {
