@@ -204,9 +204,7 @@ class FrpService : Service() {
                 }
             }.sortedWith(compareBy({ it.type }, { it.name }))
             // 僅保留固定錯誤代碼；未知分類不顯示原始值。
-            val error = status.optString("error").takeIf {
-                it in setOf("dns", "refused", "timeout", "unreachable", "tls", "authentication", "login_rejected", "connection")
-            }.orEmpty()
+            val error = status.optString("error").takeIf { it in errorDetails }.orEmpty()
             FrpRuntimeStatus(FrpConnectionStatus(phase, error, status.getInt("attempts")), proxies)
         } finally {
             connection.disconnect()

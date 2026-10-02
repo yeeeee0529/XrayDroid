@@ -44,6 +44,25 @@ class FrpConnectionStatusTest {
     }
 
     @Test
+    fun closedConnectionPointsAtTcpMuxMismatch() {
+        val status = FrpConnectionStatus(FrpConnectionPhase.RETRYING, "closed")
+        assertTrue(status.detail.contains("tcpMux"))
+        assertFalse(status.detail.contains("連線或交握失敗"))
+    }
+
+    @Test
+    fun everyKnownErrorCodeHasItsOwnMessage() {
+        // 核心分類與顯示文字必須一對一；漏掉任何一個都會靜默退回泛用訊息。
+        assertEquals(9, errorDetails.size)
+        assertEquals(9, errorDetails.values.toSet().size)
+        val generic = FrpConnectionStatus(FrpConnectionPhase.RETRYING, "connection").detail
+        for ((code, message) in errorDetails) {
+            assertEquals(message, FrpConnectionStatus(FrpConnectionPhase.RETRYING, code).detail)
+            if (code != "connection") assertFalse("$code falls back to the generic message", message == generic)
+        }
+    }
+
+    @Test
     fun connectedStateDistinguishesLoginFromForwarding() {
         assertTrue(FrpConnectionStatus(FrpConnectionPhase.CONNECTED).detail.contains("代理狀態"))
         assertEquals("代理已啟用", frpProxyStatusLabel("running"))
