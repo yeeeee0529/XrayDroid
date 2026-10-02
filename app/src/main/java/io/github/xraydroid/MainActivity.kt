@@ -8,32 +8,17 @@ import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import android.widget.Toast
-import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.lerp
 import androidx.core.net.toUri
 import io.github.xraydroid.runtime.FrpService
 import io.github.xraydroid.runtime.FrpStore
@@ -42,10 +27,10 @@ import io.github.xraydroid.runtime.ServerStore
 import io.github.xraydroid.runtime.XuiService
 import io.github.xraydroid.ui.FrpScreen
 import io.github.xraydroid.ui.OutboundNetworkScreen
+import io.github.xraydroid.ui.PredictiveBackNavigation
 import io.github.xraydroid.ui.ServerDashboard
 import io.github.xraydroid.ui.SettingsScreen
 import io.github.xraydroid.ui.theme.XrayDroidTheme
-import kotlin.coroutines.cancellation.CancellationException
 
 class MainActivity : ComponentActivity() {
     private var pendingAction: String? = null
@@ -82,27 +67,35 @@ class MainActivity : ComponentActivity() {
                     "network", "frp" -> "settings"
                     else -> null
                 }
-                // in-app predictive back 疊層：backTarget 為手勢預覽中的目標頁。
-                var backTarget by remember { mutableStateOf<String?>(null) }
-                val backProgress = remember { Animatable(0f) }
-                val content: @Composable (String) -> Unit = { current ->
+                DisposableEffect(page) {
+                    val secure = page == "frp"
+                    if (secure) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    onDispose {
+                        if (secure) window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                }
+                PredictiveBackNavigation(
+                    page = page,
+                    parent = ::parentOf,
+                    onNavigate = { page = it }
+                ) { current, navigateBack ->
                     when (current) {
                         "settings" -> SettingsScreen(
-                            onBack = { page = "home" },
+                            onBack = navigateBack,
                             onOpenNetwork = { page = "network" },
                             onOpenFrp = { page = "frp" }
                         )
                         "network" -> OutboundNetworkScreen(
                             serverState = state,
                             networkState = networkState,
-                            onBack = { page = "settings" },
+                            onBack = navigateBack,
                             onSelectNetwork = NetworkStore::select,
                             onSelectInterface = NetworkStore::selectInterface,
                             onRefreshInterfaces = NetworkStore::refreshInterfaces
                         )
                         "frp" -> FrpScreen(
                             state = frpState,
-                            onBack = { page = "settings" },
+                            onBack = navigateBack,
                             onStart = { dispatchWithNotificationPermission(FrpService.ACTION_START) },
                             onStop = { FrpService.dispatch(this, FrpService.ACTION_STOP) },
                             onRestart = { dispatchWithNotificationPermission(FrpService.ACTION_RESTART) }
@@ -117,66 +110,6 @@ class MainActivity : ComponentActivity() {
                                 onOpenPanel = { openPanel(state.panelUrl) }
                             )
                         }
-                    }
-                }
-                // 返回手勢期間預覽目標頁；commit 時切換、cancel 時回復前景頁。按鍵返回以 0 個事件完成，同樣進入 commit 分支。
-                PredictiveBackHandler(enabled = parentOf(page) != null) { events ->
-                    try {
-                        events.collect { event: BackEventCompat ->
-                            backTarget = parentOf(page)
-                            backProgress.snapTo(event.progress.coerceIn(0f, 1f))
-                        }
-                        val target = parentOf(page)
-                        backTarget = null
-                        backProgress.snapTo(0f)
-                        if (target != null) page = target
-                    } catch (e: CancellationException) {
-                        // 手勢取消：前景頁動畫回復原狀後移除疊層。
-                        try {
-                            backProgress.animateTo(0f, tween(150))
-                        } finally {
-                            backTarget = null
-                        }
-                    }
-                }
-                DisposableEffect(page) {
-                    if (page == "frp") window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                    onDispose {
-                        if (page == "frp") window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                    }
-                }
-                // 疊層外圍填主題背景色：背景頁起始為 0.95 時，避免透出淺色 window 背景。
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.background)
-                ) {
-                    val target = backTarget
-                    if (target == null) {
-                        content(page)
-                    } else {
-                        // 背景：目標頁隨手勢放大；前景：當前頁縮小、加上圓角與陰影。
-                        Box(
-                            Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    val progress = backProgress.value
-                                    scaleX = lerp(0.95f, 1f, progress)
-                                    scaleY = scaleX
-                                }
-                        ) { content(target) }
-                        Box(
-                            Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    val progress = backProgress.value
-                                    scaleX = lerp(1f, 0.9f, progress)
-                                    scaleY = scaleX
-                                    shape = RoundedCornerShape((24f * progress).dp)
-                                    clip = true
-                                    shadowElevation = 48f * progress
-                                }
-                        ) { content(page) }
                     }
                 }
             }

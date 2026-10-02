@@ -110,6 +110,8 @@ class SettingsNavigationTest {
 
     private fun matchingNodes(text: String): List<AccessibilityNodeInfo> {
         val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow ?: return emptyList()
+        // Activity 啟動是非同步的；正式版也可能顯示相同標題，不可點到前一個視窗。
+        if (root.packageName?.toString() != InstrumentationRegistry.getInstrumentation().targetContext.packageName) return emptyList()
         val matches = mutableListOf<AccessibilityNodeInfo>()
         fun visit(node: AccessibilityNodeInfo) {
             // Compose 可將可選列的標題與說明合併；與無障礙文字搜尋 API 一樣以包含標籤比對。

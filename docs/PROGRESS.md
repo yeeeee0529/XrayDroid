@@ -9,7 +9,7 @@ Android predictive back（預測返回手勢）整合：Manifest 加入 `android
 ### 實際驗證與限制
 
 - `:app:ktlintFormat`、`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug`：通過。JVM test 13 項 0 failures；Android lint 0 errors、0 warnings，保留既有 1 項 AutoboxingStateCreation hint。
-- Pixel 9 Pro XL／Android 17 隔離完整裝置 suite（含 frps fixture 與 adb reverse 17000／18080）：**19 項：16 通過、2 失敗、2 略過、0 errors**。`SettingsNavigationTest`（含 frp→settings、settings→home 的系統返回）與 frp 表單／TOML／導覽、frpc TCP／UDP 真實往返、面板生命週期、統計等待均通過。
+- Pixel 9 Pro XL／Android 17 隔離完整裝置 suite（含 frps fixture 與 adb reverse 17000／18080）：**19 項：15 通過、2 失敗、2 略過、0 errors**。`SettingsNavigationTest`（含 frp→settings、settings→home 的系統返回）與 frp 表單／TOML／導覽、frpc TCP／UDP 真實往返、面板生命週期、統計等待均通過。
 - 2 項失敗為前輪已記錄的既有環境失敗，非本輪造成：`NetworkBindingTest.wifiCoreUsesSelectedNetworkForTcpAndUdp` 仍在 `Network.bindSocket` 回報 `EPERM`；`NetworkSwitchLifecycleTest.selectionRestartsCoreAndUnavailableNetworkStopsItUntilRecovery` 仍無法使 Wi-Fi 指定模式進入 RUNNING（使用者的熱點／修改 MAC 環境條件不變）。略過項目為行動網路不可用與裝置 suite 原有假設。
 - 手勢行為實機驗證（validation 套件，uiautomator 佐證）：設定頁右緣短滑（約 200px）取消後停留設定頁；完整滑動 commit 後回首頁；出站網路頁 commit 回設定索引（層級正確、未跳回首頁）；frp 乾淨草稿 commit 回設定索引；frp 輸入字元後按返回鍵彈出「捨棄未儲存的草稿？」，選「捨棄並返回」回設定索引。中間幀截圖因兩頁同為淺色背景，縮放過場的可見特徵以邊緣／中央條帶像素差異佐證（邊緣差異約 52–54、中央約 7–8），未做逐幀錄影。
 - frp 頁過場受 FLAG_SECURE 保護，無法截圖驗證（符合設計，與前輪一致）。
@@ -21,6 +21,27 @@ Android predictive back（預測返回手勢）整合：Manifest 加入 `android
 Predictive back 過場白邊修正：使用者實拍手勢中間幀顯示設定頁縮放時四周露出白邊。根因為疊層根 Box 透明，背景目標頁起始縮放 0.95 時其外圍透出 Manifest theme（`Theme.Material.Light`）的淺色 window background。修正為根 Box 填入 `MaterialTheme.colorScheme.background`。修正後再次安裝並實測：手勢中間幀的左／右／頂部邊緣平均 RGB 約 (26–27, 8–11)（深色主題背景），白邊消失；手勢隨後 commit 正常回首頁。ktlintCheck、lintDebug、testDebugUnitTest、assembleDebug 通過，APK application ID 實際確認為 `io.github.xraydroid` 並以 `adb install -r` 更新保留正式資料。僅驗證深色主題實拍；淺色主題下過場外圍顏色未另行取樣。
 
 [專案首頁](../README.md) · [繁體中文](zh-TW/README.md) · [English](en/README.md)
+
+## 返回動畫接手修正（2026-10-02）
+
+- 前輪 GLM 的動畫改動尚未提交；僅補完縮放到 0.9 仍會突然移除可見前景，且正常／預覽使用不同 Compose 呼叫位置，開始與取消時會重建頁面。改為 `ui/PredictiveBackNavigation.kt`，手勢跟隨縮放，完成後以 200ms 淡出前景並完成背景縮放；取消以 180ms 回復。工具列與系統返回鍵共用收尾；frp 未存草稿仍由確認對話框攔截。
+- 頁面在固定 key 呼叫位置組合，保留手勢前後的 remember 草稿與捲動位置；上一頁預先留在組合中，平時透明，預覽背景不接收觸控或無障礙操作。取消的回復動畫由 Compose scope 執行，避免已取消的事件工作中無法播放動畫；新手勢與外部導覽會取消舊動畫並使舊事件失效。
+- `DisposableEffect` 捕捉進入時是否為 frp，離開後正確解除 FLAG_SECURE。
+- 更正前輪裝置結果算術：19 項為 15 通過、2 失敗、2 略過。前輪 `adb install -r` 在隔離測試 build 後未重建正式 APK，不能據此宣稱正式版已更新；本輪正式 APK 在隔離測試後重新 build 並檢查 application ID。
+- 不採用短滑距離推斷取消，也不以 PNG 像素差異宣稱流暢度或記憶體穩定；新增裝置 test 直接注入開始、進度、取消與完成事件，確認取消保留狀態、收尾前不切頁、再次手勢及工具列返回。
+
+### 本輪實際驗證
+
+- `:app:ktlintFormat` 單獨執行後，再跑 `:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 通過；Kotlin 編譯通過，JVM test 共 13 項、0 failures／errors。未修改原生核心，沿用已建置的固定版本執行檔。
+- Pixel 9 Pro XL／Android 17 隔離完整裝置 suite：以 ElementTree 解析 testcase 子節點確認 **23 項：19 通過、2 失敗、2 略過**。新增 4 項返回動畫 test、設定導覽、frpc 真實 TCP／UDP 往返與面板生命週期皆通過。
+- 兩項失敗仍為 `NetworkBindingTest.wifiCoreUsesSelectedNetworkForTcpAndUdp`（Android `Network.bindSocket` 回報網路 103 的 EPERM）與 `NetworkSwitchLifecycleTest.selectionRestartsCoreAndUnavailableNetworkStopsItUntilRecovery`（Wi-Fi 服務未進入 RUNNING）；發生於未修改的網路功能，不更動裝置網路政策或擴大本輪修正。行動網路及確切介面恢復測試略過。完整 suite 並未全數通過。
+- 開發中新增動畫與既有設定導覽混合執行時，後者首次點選設定後等待「出站網路」逾時；單獨重跑及完整 suite 均通過，其後混合執行再次出現相同失敗；測試只依文字比對，非同步啟動期間可能匹配仍在前景的正式套件同名頁面。修正 `SettingsNavigationTest.matchingNodes` 為先確認視窗 packageName 等於隔離套件，未假稱首次通過。
+- 新增 test 控制 Compose 時鐘，直接注入開始／進度／取消／完成事件：取消保留編輯文字與 remember 實例；收尾前仍停留原頁；新手勢打斷回復不被舊工作清除；工具列返回完成切換；補強目標預覽切頁後不重建的斷言。
+- 正式版錄影首輪沒有預期中間影格，進一步以暫時且不含使用者資料的診斷確認系統與 Compose 動畫倍率均為 1.0，但首次建立目標頁使動畫從 0.0 到約 0.98 之間間隔約 175ms。將上一頁預先組合並保留固定 key，避免首次組合／測量耗掉收尾時間；所有暫時診斷已移除。完整 23 項 suite 在此最佳化前執行，最終修改另跑相關裝置 test。
+- 最終最佳化與測試視窗修正後，返回動畫 4 項、設定導覽 1 項、frp 模式與草稿 5 項，共 **10 項相關裝置 test 全數通過**；最終 `:app:ktlintCheck :app:lintDebug :app:assembleDebug` 通過；lint 0 errors／warnings、2 項 AutoboxingStateCreation hints。
+- 正式 APK 不帶 validationApplicationId 重新 build，output-metadata 與 aapt2 都確認 `io.github.xraydroid`，`adb install -r` 成功並保留正式資料；啟動後主程序存在。正式設定頁工具列返回首頁錄影可見前景淡出與目標頁逐漸顯示的中間影格，避免只以像素差異宣稱流暢；右緣手勢另錄影驗證返回首頁。錄影僅設定／首頁，未擷取 frp 設定或讀取後端原始日誌。
+- 本輪 frps fixture 以受控終端啟動，測試後 Ctrl+C 正常停止且兩個監聽埠已釋放；僅移除 adb reverse 17000／18080，沒有 remove-all。隔離套件已由測試流程解除安裝，`pm list packages` 確認不存在；正式服務保持未啟動。
+- 尚未驗證其他 OEM、RTL、Android 14 以下與不同系統動畫倍率；流暢度主觀感受仍需使用者實際操作確認。未做記憶體穩定性量測。
 
 ## frpc 表單／TOML 雙模式配置
 
