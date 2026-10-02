@@ -17,6 +17,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -24,14 +25,16 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import io.github.xraydroid.R
 import io.github.xraydroid.runtime.InterfaceOption
 import io.github.xraydroid.runtime.NetworkState
 import io.github.xraydroid.runtime.OutboundNetworkMode
+import io.github.xraydroid.runtime.TextResource
 
 @Composable
 fun NetworkCard(
     state: NetworkState,
-    appliedNetworkLabel: String?,
+    appliedNetworkLabel: TextResource?,
     enabled: Boolean,
     onSelect: (OutboundNetworkMode) -> Unit,
     onSelectInterface: (String) -> Unit,
@@ -48,32 +51,34 @@ fun NetworkCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("出站網路", style = MaterialTheme.typography.titleLarge)
+                val refreshLabel = stringResource(R.string.network_refresh)
+                Text(stringResource(R.string.network_title), style = MaterialTheme.typography.titleLarge)
                 TextButton(
                     onClick = onRefresh,
-                    modifier = Modifier.semantics { contentDescription = "重新偵測" }
-                ) { Text("重新偵測") }
+                    modifier = Modifier.semantics { contentDescription = refreshLabel }
+                ) { Text(refreshLabel) }
             }
             Text(
-                "選擇要使用的網路介面。切換會重新啟動運作中的核心，既有連線將中斷。",
+                stringResource(R.string.network_description),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             if (state.selectedInterfaceName == null && state.selectedMode != OutboundNetworkMode.SYSTEM &&
                 state.selectedMode != OutboundNetworkMode.CELLULAR
             ) {
-                NetworkDetail("目前沿用先前的網路類型設定，尚未固定介面；選擇下方介面即可固定使用。")
+                NetworkDetail(stringResource(R.string.network_legacy_mode_notice))
             }
             Column(Modifier.selectableGroup()) {
                 NetworkSelectionRow(
-                    title = "跟隨系統",
+                    title = stringResource(R.string.network_follow_system),
                     selected = state.selectedInterfaceName == null && state.selectedMode == OutboundNetworkMode.SYSTEM,
                     enabled = enabled,
                     onSelect = { onSelect(OutboundNetworkMode.SYSTEM) }
                 ) {
                     NetworkDetail(
-                        state.interfaces.firstOrNull { it.isDefault }?.let { "目前預設介面：${it.interfaceName}" }
-                            ?: "目前沒有預設網路"
+                        state.interfaces.firstOrNull { it.isDefault }
+                            ?.let { stringResource(R.string.network_default_interface, it.interfaceName) }
+                            ?: stringResource(R.string.network_no_default_interface)
                     )
                 }
                 state.interfaces.forEach { option ->
@@ -85,26 +90,33 @@ fun NetworkCard(
                     )
                 }
                 NetworkSelectionRow(
-                    title = "取得行動網路",
+                    title = stringResource(R.string.network_request_cellular),
                     selected = state.selectedInterfaceName == null && state.selectedMode == OutboundNetworkMode.CELLULAR,
                     enabled = enabled,
                     onSelect = { onSelect(OutboundNetworkMode.CELLULAR) }
                 ) {
-                    NetworkDetail("向系統請求行動網路；連線後可選擇指定介面。")
+                    NetworkDetail(stringResource(R.string.network_request_cellular_detail))
                 }
             }
             val selected = state.selectedOption
             val selectedInterface = state.interfaces.firstOrNull { it.interfaceName == state.selectedInterfaceName }
+            val message = state.message
+            val reason = selectedInterface?.unavailableReason
             val status = when {
                 state.selectedInterfaceName == null && state.selectedMode == OutboundNetworkMode.SYSTEM ->
-                    state.interfaces.firstOrNull { it.isDefault }?.let { "由系統決定路由，目前預設介面：${it.interfaceName}。" }
-                        ?: "由系統決定路由，目前沒有預設網路。"
-                selectedInterface?.unavailableReason != null -> "${selectedInterface.interfaceName}：${selectedInterface.unavailableReason}"
-                selected != null && !selected.isValidated -> "所選網路已連線，尚未確認可連上網際網路。"
-                selected != null -> "所選網路已連線。"
-                state.requestingCellular -> "正在取得行動網路，請稍候。"
-                state.message.isNotBlank() -> state.message
-                else -> "所選介面不可用；不會自動改用其他網路。"
+                    state.interfaces.firstOrNull { it.isDefault }
+                        ?.let { stringResource(R.string.network_status_follow_system, it.interfaceName) }
+                        ?: stringResource(R.string.network_status_follow_system_no_default)
+                reason != null -> stringResource(
+                    R.string.network_status_interface_reason,
+                    selectedInterface.interfaceName,
+                    stringResource(reason)
+                )
+                selected != null && !selected.isValidated -> stringResource(R.string.network_status_connected_unvalidated)
+                selected != null -> stringResource(R.string.network_status_connected)
+                state.requestingCellular -> stringResource(R.string.network_status_requesting_cellular)
+                message != null -> message.resolve()
+                else -> stringResource(R.string.network_status_unavailable)
             }
             Text(
                 status,
@@ -117,11 +129,15 @@ fun NetworkCard(
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
             )
             Text(
-                if (appliedNetworkLabel == null) "核心尚未套用網路" else "核心目前使用：$appliedNetworkLabel",
+                if (appliedNetworkLabel == null) {
+                    stringResource(R.string.network_core_not_applied)
+                } else {
+                    stringResource(R.string.network_core_applied, appliedNetworkLabel.resolve())
+                },
                 style = MaterialTheme.typography.labelLarge
             )
             Text(
-                "跟隨系統會沿用系統的 VPN（虛擬私人網路）；指定實體介面可能繞過 VPN。",
+                stringResource(R.string.network_vpn_notice),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -138,27 +154,31 @@ private fun InterfaceRow(option: InterfaceOption, selected: Boolean, enabled: Bo
         enabled = enabled && available,
         onSelect = onSelect
     ) {
-        val transport = when (option.mode) {
-            OutboundNetworkMode.SYSTEM -> "系統網路"
-            OutboundNetworkMode.WIFI -> "Wi-Fi"
-            OutboundNetworkMode.CELLULAR -> "行動網路"
-            OutboundNetworkMode.ETHERNET -> "乙太網路"
-            OutboundNetworkMode.VPN -> "VPN（虛擬私人網路）"
-            OutboundNetworkMode.OTHER -> "其他介面"
-        }
+        val transport = stringResource(
+            when (option.mode) {
+                OutboundNetworkMode.SYSTEM -> R.string.network_transport_system
+                OutboundNetworkMode.WIFI -> R.string.network_transport_wifi
+                OutboundNetworkMode.CELLULAR -> R.string.network_transport_cellular
+                OutboundNetworkMode.ETHERNET -> R.string.network_transport_ethernet
+                OutboundNetworkMode.VPN -> R.string.network_transport_vpn
+                OutboundNetworkMode.OTHER -> R.string.network_transport_other
+            }
+        )
+        val reason = option.unavailableReason
         val status = when {
-            option.unavailableReason != null -> option.unavailableReason
-            !option.isUp -> "介面未啟用"
-            option.handle == null -> "系統未提供可綁定網路"
-            option.isValidated -> "可連上網際網路"
-            else -> "已連線，網際網路未確認"
+            reason != null -> stringResource(reason)
+            !option.isUp -> stringResource(R.string.network_interface_down)
+            option.handle == null -> stringResource(R.string.network_interface_not_bindable)
+            option.isValidated -> stringResource(R.string.network_interface_validated)
+            else -> stringResource(R.string.network_interface_unvalidated)
         }
-        NetworkDetail("$transport · $status${if (option.isDefault) " · 系統預設" else ""}")
+        val defaultSuffix = if (option.isDefault) stringResource(R.string.network_interface_default_suffix) else ""
+        NetworkDetail("$transport · $status$defaultSuffix")
         if (option.addresses.isNotEmpty()) {
             NetworkDetail(option.addresses.joinToString("\n"), monospace = true)
         }
         if (option.dnsServers.isNotEmpty()) {
-            NetworkDetail("DNS：${option.dnsServers.joinToString(", ")}", monospace = true)
+            NetworkDetail(stringResource(R.string.network_interface_dns, option.dnsServers.joinToString(", ")), monospace = true)
         }
     }
 }

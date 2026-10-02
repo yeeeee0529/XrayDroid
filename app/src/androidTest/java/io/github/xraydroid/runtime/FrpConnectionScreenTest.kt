@@ -22,7 +22,7 @@ class FrpConnectionScreenTest {
             FrpState(
                 phase = FrpPhase.RUNNING,
                 loaded = true,
-                message = "",
+                message = null,
                 connection = FrpConnectionStatus(FrpConnectionPhase.RETRYING, "login_rejected", 2)
             )
         )

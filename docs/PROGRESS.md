@@ -2,6 +2,34 @@
 
 日期：2026-10-02。
 
+## 使用者可見文字抽出至資源（2026-10-02）
+
+- 新增 `app/src/main/res/values/strings.xml`，預設語系繁體中文，共 328 條；原本散落在 Compose 畫面、前景服務通知與 runtime 狀態的字串全部移入。
+- 新增 `runtime/TextResource`（資源 ID 加格式參數）與 `ui/TextResource.resolve()`。`ServerState.message`、`ServerState.outboundNetworkLabel`、`FrpState.message`、`NetworkState.message`、`FrpConnectionStatus.detail` 改帶資源 ID；`FrpConnectionPhase.titleRes`、`errorDetails`、`frpProxyStatusLabel()`、`InterfaceOption.unavailableReason`、`FrpField.label/hint` 改為 `@StringRes`。
+- UI 以 `stringResource()` 解析，服務通知與事件回饋以 `getString()` 解析；`AndroidManifest.xml` 的 `android:label` 改用 `@string/app_name`。介面名稱、位址、版本、代理名稱與 URL 等資料值維持原樣，只作為格式參數帶入。
+- 未移入資源：前景服務 `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` 的英文系統診斷描述，以及服務日誌的英文生命週期事件，兩者都不是在地化文案。
+- 單元測試 `FrpConnectionStatusTest` 改為比對資源 ID，並直接讀取 `strings.xml` 驗證關鍵文案，保留「核心錯誤分類與顯示文字一對一」與 tcpMux 提示兩項守門。
+
+### 已完成的驗證
+
+- `./gradlew :app:ktlintFormat` 通過；`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 全部通過（BUILD SUCCESSFUL）。
+- JVM 單元測試 XML 確認 23 項、0 failures／errors／skipped，與本輪前相同；Android lint 0 errors／warnings，保留既有 2 個 `AutoboxingStateCreation` hints。Kotlin 編譯在 `@param:`／`@get:` 標註後無警告。
+- 資源交叉檢查：328 條字串都有 `R.string` 或 `@string/` 參照，沒有未使用或缺少的項目；產物 `app/build/outputs/apk/debug/app-debug.apk` 已重新產生。
+
+### 實機驗證（Pixel 9 Pro XL／Android 17／arm64）
+
+- 隔離 `io.github.xraydroid.validation` 完整 suite（含本機 frps fixture 與 adb reverse 17000／18080）：XML 確認 32 項、28 通過、2 失敗、2 略過、0 errors。
+- 與畫面文字相關的案例全數通過，包含 `PredictiveBackNavigationTest` 4 項、`FrpAsyncEditorTest` 4 項、frp 表單／TOML／導覽、frpc TCP／UDP 實際轉發、面板生命週期、網路切換與統計等待。
+- 2 項失敗同為裝置端的網路限制：驗證期間裝置有作用中的 VPN（`bypassable=false`、Uids 0-99999、UnderlyingNetworks=[104]），App 直接綁定底層 Wi-Fi 網路時得到 `EPERM`。`NetworkBindingTest.wifiCoreUsesSelectedNetworkForTcpAndUdp` 在未改動的 HEAD 版本以相同錯誤失敗，確認與本次改動無關；`NetworkSwitchLifecycleTest.selectionRestartsCoreAndUnavailableNetworkStopsItUntilRecovery` 是同一綁定失敗造成核心無法以 Wi-Fi 介面啟動。2 項略過為行動網路不可用。
+- 期間一度出現的 UI 案例失敗（`No compose hierarchies found`、動畫未推進、等待 UI 條件逾時）經查為裝置螢幕 60 秒逾時進入 AOD 造成 Activity 停止；以 `svc power stayon true` 保持喚醒後該批案例全數通過，並非程式問題。日後執行實機 suite 需先保持螢幕喚醒。
+- 正式套件 APK 重新產生並以 aapt2 確認 applicationId `io.github.xraydroid`；`adb install -r` 更新成功且 `files/server/{db,frp,log,xray}` 保留。實機畫面確認首頁、設定、出站網路與 frp 各頁文字顯示正常；使用者原有服務已恢復（`libxui.so`／`libxray.so`／`libfrpc.so` 均在執行，frp 顯示「已連線至 frps」與「代理已啟用 1 / 1」）。
+- 測試後已停止 fixture（含其 frps 子程序）、僅移除本輪 adb reverse 17000／18080、解除安裝 validation 套件，並還原 `stay_on_while_plugged_in`。
+
+### 未驗證
+
+- 面板登入與 VLESS 入站管理等需要 fixture 憑證的案例沿用先前紀錄，本輪未重跑。
+- VPN 作用中的網路綁定行為（上述 2 項失敗）未在關閉 VPN 後重驗。
+
 ## 高與中高優先效能優化（2026-10-02）
 
 - 後端外部 IP 改為非阻塞背景查詢；IPv4／IPv6 共用 3 秒期限、最多兩個並行請求，每個服務實例只查一次並保留結果至核心重啟，避免沒有 IPv6 時新增週期性對外請求。CPU 型號／頻率背景載入，Android 成功結果快取 30 分鐘、失敗 1 分鐘；磁碟容量／使用量快取 30 秒。僅明確 `os.ErrPermission` 的受限系統統計退避 5 分鐘，保留可讀取的動態統計、流量記帳與告警原有 2 秒節奏。

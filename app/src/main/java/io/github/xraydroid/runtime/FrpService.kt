@@ -55,7 +55,7 @@ class FrpService : Service() {
         layout = FrpLayout(this)
         FrpStore.initialize(applicationContext)
         getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(CHANNEL, "frp 用戶端", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL, getString(R.string.frp_notification_channel), NotificationManager.IMPORTANCE_LOW)
         )
     }
 
@@ -67,9 +67,13 @@ class FrpService : Service() {
             generation.incrementAndGet()
         }
         if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTIFICATION_ID, notification("正在準備 frp"), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            startForeground(
+                NOTIFICATION_ID,
+                notification(getString(R.string.frp_notification_preparing)),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
         } else {
-            startForeground(NOTIFICATION_ID, notification("正在準備 frp"))
+            startForeground(NOTIFICATION_ID, notification(getString(R.string.frp_notification_preparing)))
         }
         scope.launch {
             mutex.withLock {
@@ -88,7 +92,7 @@ class FrpService : Service() {
                     stopClient()
                     if (generation.get() == ticket) {
                         desiredRunning = false
-                        FrpStore.transition(FrpPhase.ERROR, "frp 啟動失敗，請檢查設定與檔案路徑")
+                        FrpStore.transition(FrpPhase.ERROR, TextResource(R.string.frp_message_start_failed))
                         finish(ticket, startId)
                     }
                 }
@@ -102,10 +106,10 @@ class FrpService : Service() {
         if (existing?.isAlive == true) {
             monitor(existing, ticket, startId)
             monitorStatus(existing, ticket)
-            updateNotification(FrpStore.state.value.connection.phase.title)
+            updateNotification(getString(FrpStore.state.value.connection.phase.titleRes))
             return
         }
-        FrpStore.transition(FrpPhase.STARTING, "正在驗證並啟動 frpc")
+        FrpStore.transition(FrpPhase.STARTING, TextResource(R.string.frp_message_starting))
         layout.prepare()
         val staleGroup = OwnedProcesses.groupFor(layout.executable.absolutePath)
         OwnedProcesses.terminateGroup(staleGroup)
@@ -142,9 +146,9 @@ class FrpService : Service() {
             if (statuses != null) {
                 processGroup = OwnedProcesses.groupFor(layout.executable.absolutePath)
                 check(processGroup != null) { "FRP process session is unavailable" }
-                FrpStore.transition(FrpPhase.RUNNING, "")
+                FrpStore.transition(FrpPhase.RUNNING, null)
                 FrpStore.updateRuntime(statuses)
-                updateNotification(FrpStore.state.value.connection.phase.title)
+                updateNotification(getString(FrpStore.state.value.connection.phase.titleRes))
                 monitor(child, ticket, startId)
                 monitorStatus(child, ticket)
                 return
@@ -165,7 +169,7 @@ class FrpService : Service() {
                     val previous = FrpStore.state.value.connection.phase
                     FrpStore.updateRuntime(latest)
                     if (FrpStore.state.value.connection.phase != previous) {
-                        updateNotification(FrpStore.state.value.connection.phase.title)
+                        updateNotification(getString(FrpStore.state.value.connection.phase.titleRes))
                     }
                 }
             }
@@ -228,14 +232,14 @@ class FrpService : Service() {
                 OwnedProcesses.terminateGroup(processGroup, OsConstants.SIGKILL)
                 processGroup = null
                 OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
-                FrpStore.transition(FrpPhase.ERROR, "frpc 意外停止，請檢查設定後重新啟動")
+                FrpStore.transition(FrpPhase.ERROR, TextResource(R.string.frp_message_stopped_unexpectedly))
                 finish(ticket, startId)
             }
         }
     }
 
     private suspend fun stopClient() {
-        FrpStore.transition(FrpPhase.STOPPING, "正在停止 frp")
+        FrpStore.transition(FrpPhase.STOPPING, TextResource(R.string.frp_message_stopping))
         val group = processGroup ?: OwnedProcesses.groupFor(layout.executable.absolutePath)
         val child = synchronized(processLock) { process.also { process = null } }
         OwnedProcesses.terminateGroup(group)
@@ -249,7 +253,7 @@ class FrpService : Service() {
         OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
         OwnedProcesses.terminateGroup(group, OsConstants.SIGKILL)
         processGroup = null
-        FrpStore.transition(FrpPhase.STOPPED, "frp 已停止")
+        FrpStore.transition(FrpPhase.STOPPED, TextResource(R.string.frp_message_stopped))
     }
 
     private suspend fun finish(ticket: Long, startId: Int) = withContext(Dispatchers.Main) {
@@ -274,11 +278,11 @@ class FrpService : Service() {
         )
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_server)
-            .setContentTitle("XrayDroid frp 用戶端")
+            .setContentTitle(getString(R.string.frp_notification_title))
             .setContentText(message)
             .setContentIntent(activity)
             .setOngoing(true)
-            .addAction(Notification.Action.Builder(null, "停止 frp", stop).build())
+            .addAction(Notification.Action.Builder(null, getString(R.string.frp_notification_stop), stop).build())
             .build()
     }
 
@@ -299,7 +303,7 @@ class FrpService : Service() {
             process = null
             OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
         }
-        if (FrpStore.state.value.phase != FrpPhase.ERROR) FrpStore.transition(FrpPhase.STOPPED, "frp 已停止")
+        if (FrpStore.state.value.phase != FrpPhase.ERROR) FrpStore.transition(FrpPhase.STOPPED, TextResource(R.string.frp_message_stopped))
         super.onDestroy()
     }
 

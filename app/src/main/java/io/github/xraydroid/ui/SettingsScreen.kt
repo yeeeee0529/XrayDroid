@@ -1,5 +1,6 @@
 package io.github.xraydroid.ui
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,9 +19,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import io.github.xraydroid.R
 import io.github.xraydroid.runtime.NetworkState
 import io.github.xraydroid.runtime.OutboundNetworkMode
 import io.github.xraydroid.runtime.ServerPhase
@@ -28,22 +31,22 @@ import io.github.xraydroid.runtime.ServerState
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit, onOpenNetwork: () -> Unit, onOpenFrp: () -> Unit) {
-    SettingsPage("設定", "返回首頁", onBack) {
+    SettingsPage(R.string.settings_title, R.string.nav_back_home, onBack) {
         item {
-            SettingsEntry("出站網路", "選擇 3x-ui 與 Xray 使用的網路介面。", onOpenNetwork)
+            SettingsEntry(R.string.settings_network_title, R.string.settings_network_description, onOpenNetwork)
         }
         item {
-            SettingsEntry("frp", "設定完整 frpc 用戶端、代理與訪客，獨立啟停。", onOpenFrp)
+            SettingsEntry(R.string.settings_frp_title, R.string.settings_frp_description, onOpenFrp)
         }
     }
 }
 
 @Composable
-private fun SettingsEntry(title: String, description: String, onClick: () -> Unit) {
+private fun SettingsEntry(@StringRes title: Int, @StringRes description: Int, onClick: () -> Unit) {
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge)
-            Text(description, style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(title), style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(description), style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
@@ -58,7 +61,7 @@ fun OutboundNetworkScreen(
     onRefreshInterfaces: () -> Unit
 ) {
     val busy = serverState.phase == ServerPhase.STARTING || serverState.phase == ServerPhase.STOPPING
-    SettingsPage("出站網路", "返回設定", onBack) {
+    SettingsPage(R.string.network_title, R.string.nav_back_settings, onBack) {
         item {
             NetworkCard(
                 state = networkState,
@@ -74,8 +77,8 @@ fun OutboundNetworkScreen(
 
 @Composable
 internal fun SettingsPage(
-    title: String,
-    backLabel: String,
+    @StringRes title: Int,
+    @StringRes backLabel: Int,
     onBack: () -> Unit,
     content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit
 ) {
@@ -92,11 +95,12 @@ internal fun SettingsPage(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(title, style = MaterialTheme.typography.headlineLarge)
+                        val back = stringResource(backLabel)
+                        Text(stringResource(title), style = MaterialTheme.typography.headlineLarge)
                         TextButton(
                             onClick = onBack,
-                            modifier = Modifier.semantics { contentDescription = backLabel }
-                        ) { Text(backLabel) }
+                            modifier = Modifier.semantics { contentDescription = back }
+                        ) { Text(back) }
                     }
                 }
                 content()

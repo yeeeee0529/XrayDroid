@@ -31,6 +31,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ## 狀態
 
 目前為首版工程原型：原生控制介面、前景服務、版本固定的核心封裝與 Android 修補已實作；驗證結果請參閱[進度紀錄](docs/PROGRESS.md)。
+使用者可見文字已集中於 `app/src/main/res/values/strings.xml`（預設繁體中文），狀態以資源 ID 傳遞，方便日後新增語系。
 M3E 適用於原生介面；既有網頁面板保留上游樣式。第一版不支援 MTProto / TUIC 側車程序、Linux 系統管理與核心自行更新。
 本 App 提供本機伺服器，尚未實作 Android VPNService（VPN 服務）或全裝置流量接管。
 

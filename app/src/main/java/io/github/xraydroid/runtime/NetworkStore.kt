@@ -9,7 +9,9 @@ import android.net.NetworkRequest
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import androidx.annotation.StringRes
 import androidx.core.content.edit
+import io.github.xraydroid.R
 import java.net.NetworkInterface
 import java.util.Collections
 import java.util.concurrent.Executors
@@ -37,7 +39,7 @@ data class InterfaceOption(
     val isUp: Boolean,
     val isValidated: Boolean,
     val isDefault: Boolean,
-    val unavailableReason: String?
+    @param:StringRes @get:StringRes val unavailableReason: Int?
 )
 
 data class NetworkState(
@@ -45,7 +47,7 @@ data class NetworkState(
     val options: List<NetworkOption> = emptyList(),
     val selectedOption: NetworkOption? = null,
     val requestingCellular: Boolean = false,
-    val message: String = "",
+    val message: TextResource? = null,
     val selectedInterfaceName: String? = null,
     val interfaces: List<InterfaceOption> = emptyList()
 )
@@ -91,7 +93,7 @@ object NetworkStore {
     private val networks = mutableMapOf<Long, Network>()
     private val capabilities = mutableMapOf<Long, NetworkCapabilities>()
     private val properties = mutableMapOf<Long, LinkProperties>()
-    private val bindingFailures = mutableMapOf<Long, String>()
+    private val bindingFailures = mutableMapOf<Long, Int>()
     private var kernelInterfaces = emptyList<KernelInterface>()
     private var defaultHandle: Long? = null
     private var cellularRequest: ConnectivityManager.NetworkCallback? = null
@@ -99,7 +101,7 @@ object NetworkStore {
     private var selectedMode = OutboundNetworkMode.SYSTEM
     private var selectedInterfaceName: String? = null
     private var requestingCellular = false
-    private var message = ""
+    private var message: TextResource? = null
 
     @Volatile
     private var snapshotGeneration = 0L
@@ -185,7 +187,7 @@ object NetworkStore {
             putString("mode", mode.name)
             remove("interface_name")
         }
-        message = ""
+        message = null
         updateCellularRequest()
         publishAndRefresh()
     }
@@ -205,7 +207,7 @@ object NetworkStore {
             putString("mode", selectedMode.name)
             putString("interface_name", name)
         }
-        message = ""
+        message = null
         updateCellularRequest()
         publishAndRefresh()
     }
@@ -218,7 +220,7 @@ object NetworkStore {
         check(initialized) { "NetworkStore is not initialized" }
         // 手動重新整理可重新嘗試綁定，網路回呼不清除此失敗紀錄。
         bindingFailures.clear()
-        message = ""
+        message = null
         requestInterfaceRefresh()
     }
 
@@ -230,7 +232,7 @@ object NetworkStore {
         if (!initialized || handle !in networks) return
         val matches = state.value.interfaces.any { it.interfaceName == interfaceName && it.handle == handle }
         if (!matches) return
-        bindingFailures[handle] = "目前無法綁定這個網路；可重新偵測後重試。"
+        bindingFailures[handle] = R.string.network_reason_binding_failed
         publish()
     }
 
@@ -284,7 +286,7 @@ object NetworkStore {
         val requestCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 if (cellularRequest !== this) return
-                message = ""
+                message = null
                 publishAndRefresh()
             }
 
@@ -292,7 +294,7 @@ object NetworkStore {
                 if (cellularRequest !== this) return
                 cellularRequest = null
                 requestingCellular = false
-                message = "行動網路不可用；請確認行動數據已開啟。"
+                message = TextResource(R.string.network_message_cellular_unavailable)
                 publishAndRefresh()
             }
         }
@@ -311,14 +313,14 @@ object NetworkStore {
         if (requested.isFailure) {
             cellularRequest = null
             requestingCellular = false
-            message = "無法取得行動網路；請檢查裝置的網路權限。"
+            message = TextResource(R.string.network_message_cellular_request_failed)
             return
         }
         requestingCellular = true
         handler.postDelayed({
             if (cellularRequest === requestCallback && state.value.selectedOption == null) {
                 requestingCellular = false
-                message = "行動網路尚未可用；請確認行動數據已開啟。"
+                message = TextResource(R.string.network_message_cellular_pending)
                 publish()
             }
         }, 30_000)
@@ -403,12 +405,12 @@ object NetworkStore {
             val network = related.singleOrNull()
             val isUp = kernel?.isUp ?: (network != null)
             val reason = when {
-                kernel?.isLoopback == true -> "本機回送介面僅供裝置內部通訊，無法作為出站網路。"
-                kernel == null && related.isEmpty() -> "指定介面目前不存在。"
-                !isUp -> "介面目前未啟用。"
-                related.size > 1 -> "此介面對應多個 Android 網路，無法安全指定。"
-                network == null -> "未對應可供此 App 綁定的 Android 網路。"
-                network.isRestricted -> "此 Android 網路限制一般 App 使用。"
+                kernel?.isLoopback == true -> R.string.network_reason_loopback
+                kernel == null && related.isEmpty() -> R.string.network_reason_missing
+                !isUp -> R.string.network_reason_down
+                related.size > 1 -> R.string.network_reason_ambiguous
+                network == null -> R.string.network_reason_unbound
+                network.isRestricted -> R.string.network_reason_restricted
                 else -> bindingFailures[network.handle]
             }
             InterfaceOption(

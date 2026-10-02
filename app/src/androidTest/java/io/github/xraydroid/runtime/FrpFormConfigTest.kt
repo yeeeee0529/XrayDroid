@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.xraydroid.R
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -175,9 +176,9 @@ class FrpFormConfigTest {
         val invalid = baseline().addRule("proxies", "tcpmux")
             .updateRule("proxies", 0, "multiplexer", marker)
         assertFalse("An unsupported multiplexer must fail official verification", FrpStore.validateConfig(context, invalid.source))
-        val message = FrpStore.state.value.message
-        assertEquals("設定驗證失敗，請檢查 TOML 語法、欄位與檔案路徑", message)
-        assertFalse("Diagnostics must not expose raw backend field values", message.contains(marker))
+        val message = requireNotNull(FrpStore.state.value.message)
+        assertEquals(context.getString(R.string.frp_message_invalid), message.resolve(context))
+        assertFalse("Diagnostics must not expose raw backend field values", message.resolve(context).contains(marker))
         val invalidVisitor = baseline().addRule("visitors", "xtcp")
             .updateRule("visitors", 0, "serverName", "fixture-xtcp")
             .updateRule("visitors", 0, "protocol", "tcp")

@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (!granted) {
-            Toast.makeText(this, "未允許通知；服務狀態仍可在 App 中查看。", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, R.string.notification_permission_denied, Toast.LENGTH_LONG).show()
         }
         pendingAction?.let { dispatchService(it) }
         pendingAction = null
@@ -150,7 +150,7 @@ class MainActivity : ComponentActivity() {
         try {
             startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
         } catch (_: ActivityNotFoundException) {
-            Toast.makeText(this, "找不到瀏覽器，請安裝瀏覽器後再開啟管理面板。", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, R.string.browser_unavailable, Toast.LENGTH_LONG).show()
         }
     }
 

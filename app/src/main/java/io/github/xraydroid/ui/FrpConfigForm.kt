@@ -1,5 +1,6 @@
 package io.github.xraydroid.ui
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,92 +29,95 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import io.github.xraydroid.R
 import io.github.xraydroid.runtime.FrpConfigDocument
 
 private data class FrpField(
     val path: String,
-    val label: String,
+    @param:StringRes @get:StringRes val label: Int,
     val kind: String = "text",
     val choices: List<String> = emptyList(),
-    val hint: String = "",
+    @param:StringRes @get:StringRes val hint: Int? = null,
     val default: Boolean = false
 )
 
-private fun number(path: String, label: String, hint: String = "") = FrpField(path, label, "number", hint = hint)
-private fun secret(path: String, label: String) = FrpField(path, label, "secret")
-private fun list(path: String, label: String) = FrpField(path, label, "list", hint = "每行一筆；留空移除此設定")
-private fun toggle(path: String, label: String, default: Boolean = false) = FrpField(path, label, "boolean", default = default)
-private fun choice(path: String, label: String, vararg values: String) = FrpField(path, label, "choice", choices = values.toList())
-private fun map(path: String, label: String) = FrpField(path, label, "map")
+private fun number(path: String, @StringRes label: Int, @StringRes hint: Int? = null) = FrpField(path, label, "number", hint = hint)
+private fun secret(path: String, @StringRes label: Int) = FrpField(path, label, "secret")
+private fun list(path: String, @StringRes label: Int) = FrpField(path, label, "list", hint = R.string.frp_form_list_hint)
+private fun toggle(path: String, @StringRes label: Int, default: Boolean = false) = FrpField(path, label, "boolean", default = default)
+private fun choice(path: String, @StringRes label: Int, vararg values: String) = FrpField(path, label, "choice", choices = values.toList())
+private fun map(path: String, @StringRes label: Int) = FrpField(path, label, "map")
 
 private val proxyTypes = listOf("tcp", "udp", "http", "https", "stcp", "sudp", "xtcp", "tcpmux")
 private val visitorTypes = listOf("stcp", "sudp", "xtcp")
 private val connectionFields = listOf(
-    FrpField("serverAddr", "伺服器位址"),
-    number("serverPort", "伺服器連接埠", "預設 7000"),
-    FrpField("user", "使用者名稱"),
-    FrpField("clientID", "用戶端識別碼")
+    FrpField("serverAddr", R.string.frp_form_field_server_addr),
+    number("serverPort", R.string.frp_form_field_server_port, R.string.frp_form_hint_server_port),
+    FrpField("user", R.string.frp_form_field_user),
+    FrpField("clientID", R.string.frp_form_field_client_id)
 )
 private val transportFields = listOf(
-    choice("transport.protocol", "連線協定", "tcp", "kcp", "quic", "websocket", "wss"),
-    number("transport.dialServerTimeout", "連線逾時（秒）", "預設 10"),
-    number("transport.dialServerKeepalive", "TCP 保活間隔（秒）", "預設 7200；負數停用"),
-    FrpField("transport.connectServerLocalIP", "綁定本機 IP"),
-    secret("transport.proxyURL", "代理伺服器 URL"),
-    number("transport.poolCount", "預先建立連線數", "預設 1"),
-    toggle("transport.tcpMux", "TCP 多路復用", true),
-    number("transport.tcpMuxKeepaliveInterval", "TCP 多路復用心跳間隔（秒）", "預設 30"),
-    number("transport.heartbeatInterval", "心跳間隔（秒）", "多路復用預設 -1；其他預設 30"),
-    number("transport.heartbeatTimeout", "心跳逾時（秒）", "多路復用預設 -1；其他預設 90")
+    choice("transport.protocol", R.string.frp_form_field_transport_protocol, "tcp", "kcp", "quic", "websocket", "wss"),
+    number("transport.dialServerTimeout", R.string.frp_form_field_dial_timeout, R.string.frp_form_hint_dial_timeout),
+    number("transport.dialServerKeepalive", R.string.frp_form_field_dial_keepalive, R.string.frp_form_hint_dial_keepalive),
+    FrpField("transport.connectServerLocalIP", R.string.frp_form_field_connect_local_ip),
+    secret("transport.proxyURL", R.string.frp_form_field_proxy_url),
+    number("transport.poolCount", R.string.frp_form_field_pool_count, R.string.frp_form_hint_pool_count),
+    toggle("transport.tcpMux", R.string.frp_form_field_tcp_mux, true),
+    number("transport.tcpMuxKeepaliveInterval", R.string.frp_form_field_tcp_mux_keepalive, R.string.frp_form_hint_tcp_mux_keepalive),
+    number("transport.heartbeatInterval", R.string.frp_form_field_heartbeat_interval, R.string.frp_form_hint_heartbeat_interval),
+    number("transport.heartbeatTimeout", R.string.frp_form_field_heartbeat_timeout, R.string.frp_form_hint_heartbeat_timeout)
 )
 private val tlsFields = listOf(
-    toggle("transport.tls.enable", "啟用 TLS", true),
-    toggle("transport.tls.disableCustomTLSFirstByte", "停用 TLS 自訂首位元組", true),
-    FrpField("transport.tls.serverName", "TLS 伺服器名稱"),
-    FrpField("transport.tls.certFile", "用戶端憑證檔案路徑"),
-    FrpField("transport.tls.keyFile", "用戶端私鑰檔案路徑"),
-    FrpField("transport.tls.trustedCaFile", "信任 CA 憑證檔案路徑")
+    toggle("transport.tls.enable", R.string.frp_form_field_tls_enable, true),
+    toggle("transport.tls.disableCustomTLSFirstByte", R.string.frp_form_field_tls_disable_first_byte, true),
+    FrpField("transport.tls.serverName", R.string.frp_form_field_tls_server_name),
+    FrpField("transport.tls.certFile", R.string.frp_form_field_tls_cert_file),
+    FrpField("transport.tls.keyFile", R.string.frp_form_field_tls_key_file),
+    FrpField("transport.tls.trustedCaFile", R.string.frp_form_field_tls_trusted_ca)
 )
 private val oidcFields = listOf(
-    FrpField("auth.oidc.clientID", "OIDC 用戶端識別碼"),
-    secret("auth.oidc.clientSecret", "OIDC 用戶端密鑰"),
-    FrpField("auth.oidc.audience", "OIDC 對象"),
-    FrpField("auth.oidc.scope", "OIDC 範圍"),
-    FrpField("auth.oidc.tokenEndpointURL", "OIDC 權杖端點 URL"),
-    FrpField("auth.oidc.trustedCaFile", "OIDC 信任 CA 檔案路徑"),
-    toggle("auth.oidc.insecureSkipVerify", "OIDC 略過端點憑證驗證"),
-    secret("auth.oidc.proxyURL", "OIDC 代理伺服器 URL"),
-    map("auth.oidc.additionalEndpointParams", "OIDC 額外端點參數")
+    FrpField("auth.oidc.clientID", R.string.frp_form_field_oidc_client_id),
+    secret("auth.oidc.clientSecret", R.string.frp_form_field_oidc_client_secret),
+    FrpField("auth.oidc.audience", R.string.frp_form_field_oidc_audience),
+    FrpField("auth.oidc.scope", R.string.frp_form_field_oidc_scope),
+    FrpField("auth.oidc.tokenEndpointURL", R.string.frp_form_field_oidc_token_endpoint),
+    FrpField("auth.oidc.trustedCaFile", R.string.frp_form_field_oidc_trusted_ca),
+    toggle("auth.oidc.insecureSkipVerify", R.string.frp_form_field_oidc_skip_verify),
+    secret("auth.oidc.proxyURL", R.string.frp_form_field_oidc_proxy_url),
+    map("auth.oidc.additionalEndpointParams", R.string.frp_form_field_oidc_endpoint_params)
 )
 private val proxyTransportFields = listOf(
-    toggle("transport.useEncryption", "加密"),
-    toggle("transport.useCompression", "壓縮"),
-    FrpField("transport.bandwidthLimit", "頻寬限制", hint = "例如 10MB 或 100KB；留空不限速"),
-    choice("transport.bandwidthLimitMode", "頻寬限制位置", "client", "server"),
-    choice("transport.proxyProtocolVersion", "PROXY 協定版本", "", "v1", "v2"),
-    FrpField("loadBalancer.group", "負載平衡群組"),
-    secret("loadBalancer.groupKey", "負載平衡群組密鑰"),
-    choice("healthCheck.type", "健康檢查", "", "tcp", "http"),
-    number("healthCheck.timeoutSeconds", "健康檢查逾時（秒）", "預設 3"),
-    number("healthCheck.maxFailed", "健康檢查容許失敗次數", "預設 1"),
-    number("healthCheck.intervalSeconds", "健康檢查間隔（秒）", "預設 10"),
-    FrpField("healthCheck.path", "HTTP 健康檢查路徑"),
-    FrpField("healthCheck.httpHeaders", "HTTP 健康檢查標頭", "headers"),
-    map("metadatas", "代理中繼資料"),
-    map("annotations", "代理註記")
+    toggle("transport.useEncryption", R.string.frp_form_field_use_encryption),
+    toggle("transport.useCompression", R.string.frp_form_field_use_compression),
+    FrpField("transport.bandwidthLimit", R.string.frp_form_field_bandwidth_limit, hint = R.string.frp_form_hint_bandwidth_limit),
+    choice("transport.bandwidthLimitMode", R.string.frp_form_field_bandwidth_limit_mode, "client", "server"),
+    choice("transport.proxyProtocolVersion", R.string.frp_form_field_proxy_protocol_version, "", "v1", "v2"),
+    FrpField("loadBalancer.group", R.string.frp_form_field_load_balancer_group),
+    secret("loadBalancer.groupKey", R.string.frp_form_field_load_balancer_key),
+    choice("healthCheck.type", R.string.frp_form_field_health_check_type, "", "tcp", "http"),
+    number("healthCheck.timeoutSeconds", R.string.frp_form_field_health_check_timeout, R.string.frp_form_hint_health_check_timeout),
+    number("healthCheck.maxFailed", R.string.frp_form_field_health_check_max_failed, R.string.frp_form_hint_health_check_max_failed),
+    number("healthCheck.intervalSeconds", R.string.frp_form_field_health_check_interval, R.string.frp_form_hint_health_check_interval),
+    FrpField("healthCheck.path", R.string.frp_form_field_health_check_path),
+    FrpField("healthCheck.httpHeaders", R.string.frp_form_field_health_check_headers, "headers"),
+    map("metadatas", R.string.frp_form_field_metadata),
+    map("annotations", R.string.frp_form_field_annotations)
 )
 
 /** 檢查表單涵蓋的欄位型別；不相容的 TOML 保留給文字模式修正。 */
 fun canEditFrpForm(document: FrpConfigDocument): Boolean {
+    // 以下欄位只用於型別檢查，不顯示標籤，因此帶入 0。
     val common = connectionFields + transportFields + tlsFields + oidcFields + listOf(
-        choice("auth.method", "", "token", "oidc"), list("auth.additionalScopes", ""),
-        FrpField("auth.token", ""), FrpField("natHoleStunServer", ""), FrpField("dnsServer", ""),
-        number("udpPacketSize", ""), map("metadatas", ""),
-        number("transport.quic.keepalivePeriod", ""), number("transport.quic.maxIdleTimeout", ""),
-        number("transport.quic.maxIncomingStreams", "")
+        choice("auth.method", 0, "token", "oidc"), list("auth.additionalScopes", 0),
+        FrpField("auth.token", 0), FrpField("natHoleStunServer", 0), FrpField("dnsServer", 0),
+        number("udpPacketSize", 0), map("metadatas", 0),
+        number("transport.quic.keepalivePeriod", 0), number("transport.quic.maxIdleTimeout", 0),
+        number("transport.quic.maxIncomingStreams", 0)
     )
     if (!validFieldShapes(common, document::get)) return false
     for (kind in listOf("proxies", "visitors")) {
@@ -196,24 +200,41 @@ fun LazyListScope.frpConfigFormItems(
     val valid = formState.isValid
     val edit: (String, Any?) -> Unit = { path, value -> onChange(document.set(path, value)) }
     item(key = "frp/common/0") {
-        Text("留空使用 frpc 預設值。其他進階設定會保留在同一份 TOML 中。", style = MaterialTheme.typography.bodySmall)
+        Text(stringResource(R.string.frp_form_note), style = MaterialTheme.typography.bodySmall)
     }
     item(key = "frp/common/1") {
         FrpSection(
-            "基本設定",
+            stringResource(R.string.frp_form_section_basic),
             formState,
             "common/connection"
         ) { FrpFields(connectionFields, document::get, edit, enabled, "common", formState) }
     }
     item(key = "frp/common/2") {
-        FrpSection("驗證", formState, "common/auth") {
-            FrpFields(listOf(choice("auth.method", "驗證方式", "token", "oidc")), document::get, edit, enabled, "common", formState)
+        FrpSection(stringResource(R.string.frp_form_section_auth), formState, "common/auth") {
+            FrpFields(
+                listOf(choice("auth.method", R.string.frp_form_field_auth_method, "token", "oidc")),
+                document::get,
+                edit,
+                enabled,
+                "common",
+                formState
+            )
             if ((document.get("auth.method") as? String ?: "token") == "oidc") {
                 FrpFields(oidcFields, document::get, edit, enabled, "common", formState)
             } else {
-                FrpFields(listOf(secret("auth.token", "驗證權杖")), document::get, edit, enabled, "common", formState)
+                FrpFields(
+                    listOf(secret("auth.token", R.string.frp_form_field_auth_token)),
+                    document::get,
+                    edit,
+                    enabled,
+                    "common",
+                    formState
+                )
             }
-            listOf("HeartBeats" to "驗證心跳", "NewWorkConns" to "驗證新工作連線").forEach { (scope, label) ->
+            listOf(
+                "HeartBeats" to R.string.frp_form_switch_auth_heartbeats,
+                "NewWorkConns" to R.string.frp_form_switch_auth_new_work_conns
+            ).forEach { (scope, label) ->
                 val scopes = (document.get("auth.additionalScopes") as? List<*>)?.filterIsInstance<String>().orEmpty()
                 FrpSwitch(label, scope in scopes, enabled) { checked ->
                     edit("auth.additionalScopes", if (checked) (scopes + scope).distinct() else scopes - scope)
@@ -222,14 +243,26 @@ fun LazyListScope.frpConfigFormItems(
         }
     }
     item(key = "frp/common/3") {
-        FrpSection("傳輸設定", formState, "common/transport") {
+        FrpSection(stringResource(R.string.frp_form_section_transport), formState, "common/transport") {
             FrpFields(transportFields, document::get, edit, enabled, "common", formState)
             if (document.get("transport.protocol") == "quic") {
                 FrpFields(
                     listOf(
-                        number("transport.quic.keepalivePeriod", "QUIC 保活間隔（秒）", "預設 10"),
-                        number("transport.quic.maxIdleTimeout", "QUIC 閒置逾時（秒）", "預設 30"),
-                        number("transport.quic.maxIncomingStreams", "QUIC 最大接收串流數", "預設 100000")
+                        number(
+                            "transport.quic.keepalivePeriod",
+                            R.string.frp_form_field_quic_keepalive,
+                            R.string.frp_form_hint_quic_keepalive
+                        ),
+                        number(
+                            "transport.quic.maxIdleTimeout",
+                            R.string.frp_form_field_quic_idle_timeout,
+                            R.string.frp_form_hint_quic_idle_timeout
+                        ),
+                        number(
+                            "transport.quic.maxIncomingStreams",
+                            R.string.frp_form_field_quic_streams,
+                            R.string.frp_form_hint_quic_streams
+                        )
                     ),
                     document::get,
                     edit,
@@ -241,16 +274,26 @@ fun LazyListScope.frpConfigFormItems(
         }
     }
     item(key = "frp/common/4") {
-        FrpSection("TLS 設定", formState, "common/tls") { FrpFields(tlsFields, document::get, edit, enabled, "common", formState) }
+        FrpSection(stringResource(R.string.frp_form_section_tls), formState, "common/tls") {
+            FrpFields(tlsFields, document::get, edit, enabled, "common", formState)
+        }
     }
     item(key = "frp/common/5") {
-        FrpSection("其他設定", formState, "common/other") {
+        FrpSection(stringResource(R.string.frp_form_section_other), formState, "common/other") {
             FrpFields(
                 listOf(
-                    FrpField("natHoleStunServer", "STUN 伺服器", hint = "例如 stun.easyvoip.com:3478"),
-                    FrpField("dnsServer", "DNS 伺服器"),
-                    number("udpPacketSize", "UDP 最大封包長度", "預設 1500；需與伺服器一致"),
-                    map("metadatas", "用戶端中繼資料")
+                    FrpField(
+                        "natHoleStunServer",
+                        R.string.frp_form_field_stun_server,
+                        hint = R.string.frp_form_hint_stun_server
+                    ),
+                    FrpField("dnsServer", R.string.frp_form_field_dns_server),
+                    number(
+                        "udpPacketSize",
+                        R.string.frp_form_field_udp_packet_size,
+                        R.string.frp_form_hint_udp_packet_size
+                    ),
+                    map("metadatas", R.string.frp_form_field_client_metadata)
                 ),
                 document::get,
                 edit,
@@ -260,16 +303,25 @@ fun LazyListScope.frpConfigFormItems(
             )
         }
     }
-    listOf("proxies" to "轉發規則", "visitors" to "訪客規則").forEach { (kind, title) ->
+    listOf(
+        "proxies" to R.string.frp_form_section_proxies,
+        "visitors" to R.string.frp_form_section_visitors
+    ).forEach { (kind, title) ->
         val rules = document.rules(kind)
         item(key = "frp/$kind/add") {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(title, style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(title), style = MaterialTheme.typography.titleLarge)
                 val newType = formState.newRuleTypes[kind] ?: if (kind == "proxies") "tcp" else "stcp"
-                FrpChoice("新增規則協定", newType, if (kind == "proxies") proxyTypes else visitorTypes, enabled) {
+                FrpChoice(R.string.frp_form_new_rule_protocol, newType, if (kind == "proxies") proxyTypes else visitorTypes, enabled) {
                     formState.newRuleTypes[kind] = it
                 }
-                OutlinedButton(onClick = { onChange(document.addRule(kind, newType)) }, enabled = enabled && valid) { Text("新增$title") }
+                OutlinedButton(onClick = { onChange(document.addRule(kind, newType)) }, enabled = enabled && valid) {
+                    Text(
+                        stringResource(
+                            if (kind == "proxies") R.string.frp_form_add_proxy else R.string.frp_form_add_visitor
+                        )
+                    )
+                }
             }
         }
         itemsIndexed(
@@ -279,73 +331,95 @@ fun LazyListScope.frpConfigFormItems(
         ) { index, rule ->
             val type = rule["type"] as? String ?: "tcp"
             val prefix = "$kind/${document.ruleId(kind, index)}"
-            FrpSection("${rule["name"] ?: "未命名"} · ${type.uppercase()}", formState, prefix) {
+            val ruleName = rule["name"]?.toString() ?: stringResource(R.string.frp_form_rule_unnamed)
+            FrpSection("$ruleName · ${type.uppercase()}", formState, prefix) {
                 val get: (String) -> Any? = { path -> readRule(rule, path) }
                 val set: (String, Any?) -> Unit = { path, value -> onChange(document.updateRule(kind, index, path, value)) }
-                Text("規則協定為 ${type.uppercase()}；需要另一種協定時請新增規則。", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    stringResource(R.string.frp_form_rule_protocol_note, type.uppercase()),
+                    style = MaterialTheme.typography.bodySmall
+                )
                 FrpFields(ruleFields(kind, type), get, set, enabled, prefix, formState)
                 if (kind == "proxies") {
-                    FrpSection("傳輸、負載平衡與健康檢查", formState, "$prefix/transport") {
+                    FrpSection(stringResource(R.string.frp_form_section_proxy_advanced), formState, "$prefix/transport") {
                         FrpFields(proxyTransportFields, get, set, enabled, prefix, formState)
                     }
                 }
                 TextButton(onClick = {
                     formState.removeRuleInputs(prefix)
                     onChange(document.removeRule(kind, index))
-                }, enabled = enabled) { Text("刪除此規則") }
+                }, enabled = enabled) { Text(stringResource(R.string.frp_form_delete_rule)) }
             }
         }
     }
     if (!valid) {
-        item(key = "frp/invalid") { Text("請修正所有無效欄位後再切換模式或儲存。", color = MaterialTheme.colorScheme.error) }
+        item(key = "frp/invalid") {
+            Text(stringResource(R.string.frp_form_fix_invalid_fields), color = MaterialTheme.colorScheme.error)
+        }
     }
 }
 
 private fun ruleFields(kind: String, type: String): List<FrpField> = buildList {
-    add(FrpField("name", "規則名稱"))
-    add(toggle("enabled", "啟用規則", true))
+    add(FrpField("name", R.string.frp_form_field_rule_name))
+    add(toggle("enabled", R.string.frp_form_field_rule_enabled, true))
     if (kind == "visitors") {
-        add(FrpField("serverName", "目標代理名稱"))
-        add(FrpField("serverUser", "目標伺服器使用者"))
-        add(secret("secretKey", "共用密鑰"))
-        add(FrpField("bindAddr", "本機監聽位址", hint = "預設 127.0.0.1"))
-        add(number("bindPort", "本機監聽連接埠", "STCP／XTCP 可用 -1 僅接收轉向連線"))
-        add(toggle("transport.useEncryption", "加密"))
-        add(toggle("transport.useCompression", "壓縮"))
+        add(FrpField("serverName", R.string.frp_form_field_server_name))
+        add(FrpField("serverUser", R.string.frp_form_field_server_user))
+        add(secret("secretKey", R.string.frp_form_field_secret_key))
+        add(FrpField("bindAddr", R.string.frp_form_field_bind_addr, hint = R.string.frp_form_hint_bind_addr))
+        add(number("bindPort", R.string.frp_form_field_bind_port, R.string.frp_form_hint_bind_port))
+        add(toggle("transport.useEncryption", R.string.frp_form_field_use_encryption))
+        add(toggle("transport.useCompression", R.string.frp_form_field_use_compression))
         if (type == "xtcp") {
-            add(choice("protocol", "穿透協定", "quic", "kcp"))
-            add(toggle("keepTunnelOpen", "保持隧道開啟"))
-            add(number("maxRetriesAnHour", "每小時重試上限", "預設 8"))
-            add(number("minRetryInterval", "最短重試間隔（秒）", "預設 90"))
-            add(FrpField("fallbackTo", "備援訪客名稱"))
-            add(number("fallbackTimeoutMs", "備援切換逾時（毫秒）", "預設 1000"))
-            add(toggle("natTraversal.disableAssistedAddrs", "停用輔助穿透位址"))
+            add(choice("protocol", R.string.frp_form_field_nat_protocol, "quic", "kcp"))
+            add(toggle("keepTunnelOpen", R.string.frp_form_field_keep_tunnel_open))
+            add(number("maxRetriesAnHour", R.string.frp_form_field_max_retries, R.string.frp_form_hint_max_retries))
+            add(
+                number(
+                    "minRetryInterval",
+                    R.string.frp_form_field_min_retry_interval,
+                    R.string.frp_form_hint_min_retry_interval
+                )
+            )
+            add(FrpField("fallbackTo", R.string.frp_form_field_fallback_to))
+            add(
+                number(
+                    "fallbackTimeoutMs",
+                    R.string.frp_form_field_fallback_timeout,
+                    R.string.frp_form_hint_fallback_timeout
+                )
+            )
+            add(toggle("natTraversal.disableAssistedAddrs", R.string.frp_form_field_disable_assisted_addrs))
         }
     } else {
-        add(FrpField("localIP", "本機服務位址", hint = "預設 127.0.0.1"))
-        add(number("localPort", "本機服務連接埠"))
+        add(FrpField("localIP", R.string.frp_form_field_local_ip, hint = R.string.frp_form_hint_local_ip))
+        add(number("localPort", R.string.frp_form_field_local_port))
         when (type) {
-            "tcp", "udp" -> add(number("remotePort", "遠端連接埠", "0 由伺服器自動分配"))
+            "tcp", "udp" -> add(
+                number("remotePort", R.string.frp_form_field_remote_port, R.string.frp_form_hint_remote_port)
+            )
             "http", "https", "tcpmux" -> {
-                add(list("customDomains", "自訂網域"))
-                add(FrpField("subdomain", "子網域"))
+                add(list("customDomains", R.string.frp_form_field_custom_domains))
+                add(FrpField("subdomain", R.string.frp_form_field_subdomain))
                 if (type != "https") {
-                    add(FrpField("httpUser", "HTTP 驗證使用者"))
-                    add(secret("httpPassword", "HTTP 驗證密碼"))
-                    add(FrpField("routeByHTTPUser", "依 HTTP 使用者路由"))
+                    add(FrpField("httpUser", R.string.frp_form_field_http_user))
+                    add(secret("httpPassword", R.string.frp_form_field_http_password))
+                    add(FrpField("routeByHTTPUser", R.string.frp_form_field_route_by_http_user))
                 }
                 if (type == "http") {
-                    add(list("locations", "路徑"))
-                    add(FrpField("hostHeaderRewrite", "覆寫 Host 標頭"))
-                    add(map("requestHeaders.set", "要求標頭"))
-                    add(map("responseHeaders.set", "回應標頭"))
+                    add(list("locations", R.string.frp_form_field_locations))
+                    add(FrpField("hostHeaderRewrite", R.string.frp_form_field_host_header_rewrite))
+                    add(map("requestHeaders.set", R.string.frp_form_field_request_headers))
+                    add(map("responseHeaders.set", R.string.frp_form_field_response_headers))
                 }
-                if (type == "tcpmux") add(choice("multiplexer", "多路復用器", "httpconnect"))
+                if (type == "tcpmux") add(choice("multiplexer", R.string.frp_form_field_multiplexer, "httpconnect"))
             }
             "stcp", "sudp", "xtcp" -> {
-                add(secret("secretKey", "共用密鑰"))
-                add(list("allowUsers", "允許的使用者"))
-                if (type == "xtcp") add(toggle("natTraversal.disableAssistedAddrs", "停用輔助穿透位址"))
+                add(secret("secretKey", R.string.frp_form_field_secret_key))
+                add(list("allowUsers", R.string.frp_form_field_allow_users))
+                if (type == "xtcp") {
+                    add(toggle("natTraversal.disableAssistedAddrs", R.string.frp_form_field_disable_assisted_addrs))
+                }
             }
         }
     }
@@ -415,12 +489,17 @@ private fun FrpFields(
                                 else -> set(field.path, input.ifEmpty { null })
                             }
                         },
-                        label = { Text(field.label) },
+                        label = { Text(stringResource(field.label)) },
                         enabled = enabled,
                         modifier = Modifier.fillMaxWidth(),
                         isError = id in formState.errors,
                         supportingText = {
-                            if (id in formState.errors) Text("請輸入有效整數") else if (field.hint.isNotEmpty()) Text(field.hint)
+                            val hint = field.hint
+                            if (id in formState.errors) {
+                                Text(stringResource(R.string.frp_form_invalid_integer))
+                            } else if (hint != null) {
+                                Text(stringResource(hint))
+                            }
                         },
                         singleLine = field.kind != "list",
                         visualTransformation = if (field.kind == "secret" && !revealed) {
@@ -429,7 +508,15 @@ private fun FrpFields(
                             VisualTransformation.None
                         },
                         trailingIcon = if (field.kind == "secret") {
-                            { TextButton(onClick = { revealed = !revealed }, enabled = enabled) { Text(if (revealed) "隱藏" else "顯示") } }
+                            {
+                                TextButton(onClick = { revealed = !revealed }, enabled = enabled) {
+                                    Text(
+                                        stringResource(
+                                            if (revealed) R.string.frp_form_hide else R.string.frp_form_reveal
+                                        )
+                                    )
+                                }
+                            }
                         } else {
                             null
                         }
@@ -441,27 +528,32 @@ private fun FrpFields(
 }
 
 @Composable
-private fun FrpSwitch(label: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
+private fun FrpSwitch(@StringRes label: Int, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, modifier = Modifier.weight(1f))
+        Text(stringResource(label), modifier = Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
     }
 }
 
 @Composable
-private fun FrpChoice(label: String, value: String, choices: List<String>, enabled: Boolean, onChange: (String) -> Unit) {
+private fun FrpChoice(@StringRes label: Int, value: String, choices: List<String>, enabled: Boolean, onChange: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Column {
-        Text(label, style = MaterialTheme.typography.labelLarge)
+        Text(stringResource(label), style = MaterialTheme.typography.labelLarge)
         OutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-            Text(value.ifEmpty { "預設" })
+            Text(if (value.isEmpty()) stringResource(R.string.frp_form_default_choice) else value)
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             choices.forEach { item ->
-                DropdownMenuItem(text = { Text(item.ifEmpty { "停用" }) }, onClick = {
-                    expanded = false
-                    onChange(item)
-                })
+                DropdownMenuItem(
+                    text = {
+                        Text(if (item.isEmpty()) stringResource(R.string.frp_form_disabled_choice) else item)
+                    },
+                    onClick = {
+                        expanded = false
+                        onChange(item)
+                    }
+                )
             }
         }
     }
@@ -469,7 +561,7 @@ private fun FrpChoice(label: String, value: String, choices: List<String>, enabl
 
 @Composable
 private fun FrpMap(
-    label: String,
+    @StringRes label: Int,
     value: Any?,
     enabled: Boolean,
     prefix: String,
@@ -482,7 +574,7 @@ private fun FrpMap(
 
 @Composable
 private fun FrpHeaders(
-    label: String,
+    @StringRes label: Int,
     value: Any?,
     enabled: Boolean,
     prefix: String,
@@ -499,14 +591,14 @@ private fun FrpHeaders(
 
 @Composable
 private fun FrpPairs(
-    label: String,
+    @StringRes label: Int,
     entries: List<Pair<String, String>>,
     enabled: Boolean,
     prefix: String,
     state: FrpFormState,
     onChange: (List<Pair<String, String>>) -> Unit
 ) {
-    Text(label, style = MaterialTheme.typography.titleSmall)
+    Text(stringResource(label), style = MaterialTheme.typography.titleSmall)
     entries.forEachIndexed { index, (name, value) ->
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val id = "$prefix/$index/name"
@@ -522,19 +614,23 @@ private fun FrpPairs(
                         onChange(entries.toMutableList().also { it[index] = updated to value })
                     }
                 },
-                label = { Text("名稱") },
+                label = { Text(stringResource(R.string.frp_form_pair_name)) },
                 enabled = enabled,
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 isError = id in state.errors,
-                supportingText = { if (id in state.errors) Text("名稱不可空白或重複") }
+                supportingText = { if (id in state.errors) Text(stringResource(R.string.frp_form_pair_name_invalid)) }
             )
             OutlinedTextField(value, { updated ->
                 onChange(entries.toMutableList().also { it[index] = name to updated })
-            }, label = { Text("值") }, enabled = enabled, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            }, label = {
+                Text(
+                    stringResource(R.string.frp_form_pair_value)
+                )
+            }, enabled = enabled, modifier = Modifier.fillMaxWidth(), singleLine = true)
             TextButton(onClick = {
                 onChange(entries.filterIndexed { position, _ -> position != index })
-            }, enabled = enabled && state.isValid) { Text("刪除$name") }
+            }, enabled = enabled && state.isValid) { Text(stringResource(R.string.frp_form_delete_entry, name)) }
         }
     }
     OutlinedButton(onClick = {
@@ -542,5 +638,7 @@ private fun FrpPairs(
         var suffix = 1
         while (entries.any { it.first == name }) name = "key${suffix++}"
         onChange(entries + (name to ""))
-    }, enabled = enabled && state.isValid) { Text("新增$label") }
+    }, enabled = enabled && state.isValid) {
+        Text(stringResource(R.string.frp_form_add_entry, stringResource(label)))
+    }
 }

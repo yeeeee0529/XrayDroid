@@ -54,7 +54,7 @@ class XuiService : Service() {
         layout = RuntimeLayout(this)
         NetworkStore.initialize(applicationContext)
         getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(CHANNEL, "本機伺服器", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL, getString(R.string.server_notification_channel), NotificationManager.IMPORTANCE_LOW)
         )
         scope.launch {
             NetworkStore.state.map { state ->
@@ -86,7 +86,7 @@ class XuiService : Service() {
             activeStartId = startId
             generation.incrementAndGet()
         }
-        val notification = notification("正在準備本機服務")
+        val notification = notification(getString(R.string.server_notification_preparing))
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(
                 NOTIFICATION_ID,
@@ -124,12 +124,12 @@ class XuiService : Service() {
                 if (desiredRunning && !latestNetwork.followsSystem() &&
                     latestNetwork.selectedOption == null
                 ) {
-                    ServerStore.transition(ServerPhase.WAITING_FOR_NETWORK, "所選網路不可用，等待連線恢復")
-                    updateNotification("等待指定網路 · 不會改用其他網路")
+                    ServerStore.transition(ServerPhase.WAITING_FOR_NETWORK, TextResource(R.string.server_message_network_unavailable))
+                    updateNotification(getString(R.string.server_notification_waiting_network))
                 } else {
                     desiredRunning = false
                     ServerStore.log("Server startup failed: ${error.javaClass.simpleName}")
-                    ServerStore.transition(ServerPhase.ERROR, "服務啟動失敗，請確認核心檔案與網路後重試")
+                    ServerStore.transition(ServerPhase.ERROR, TextResource(R.string.server_message_start_failed))
                 }
             }
         }
@@ -144,7 +144,7 @@ class XuiService : Service() {
         val existing = process
         if (existing?.isAlive == true) {
             monitor(existing, ticket, activeStartId)
-            updateNotification("服務執行中 · 127.0.0.1:2053")
+            updateNotification(getString(R.string.server_notification_running))
             return
         }
         val networkState = NetworkStore.state.value
@@ -155,12 +155,12 @@ class XuiService : Service() {
             delay(200)
             OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
             if (generation.get() != ticket) throw CancellationException()
-            ServerStore.transition(ServerPhase.WAITING_FOR_NETWORK, "所選網路不可用，等待連線恢復")
-            updateNotification("等待指定網路 · 不會改用其他網路")
+            ServerStore.transition(ServerPhase.WAITING_FOR_NETWORK, TextResource(R.string.server_message_network_unavailable))
+            updateNotification(getString(R.string.server_notification_waiting_network))
             return
         }
         val networkHandle = if (networkState.followsSystem()) 0L else checkNotNull(option).handle
-        ServerStore.transition(ServerPhase.STARTING, "正在啟動 3x-ui 與 Xray")
+        ServerStore.transition(ServerPhase.STARTING, TextResource(R.string.server_message_starting))
         layout.prepare()
         if (!networkState.followsSystem()) {
             try {
@@ -200,17 +200,18 @@ class XuiService : Service() {
             if (panelReady() && OwnedProcesses.isRunning(layout.xray.absolutePath)) {
                 if (generation.get() != ticket) throw CancellationException()
                 val appliedMode = if (networkState.followsSystem()) OutboundNetworkMode.SYSTEM else checkNotNull(option).mode
+                val interfaceName = listOf(option?.interfaceName.orEmpty())
                 val networkLabel = when (appliedMode) {
-                    OutboundNetworkMode.SYSTEM -> "跟隨系統"
-                    OutboundNetworkMode.WIFI -> "Wi-Fi · ${option?.interfaceName}"
-                    OutboundNetworkMode.CELLULAR -> "行動網路 · ${option?.interfaceName}"
-                    OutboundNetworkMode.ETHERNET -> "乙太網路 · ${option?.interfaceName}"
-                    OutboundNetworkMode.VPN -> "VPN · ${option?.interfaceName}"
-                    OutboundNetworkMode.OTHER -> "網路介面 · ${option?.interfaceName}"
+                    OutboundNetworkMode.SYSTEM -> TextResource(R.string.network_label_system)
+                    OutboundNetworkMode.WIFI -> TextResource(R.string.network_label_wifi, interfaceName)
+                    OutboundNetworkMode.CELLULAR -> TextResource(R.string.network_label_cellular, interfaceName)
+                    OutboundNetworkMode.ETHERNET -> TextResource(R.string.network_label_ethernet, interfaceName)
+                    OutboundNetworkMode.VPN -> TextResource(R.string.network_label_vpn, interfaceName)
+                    OutboundNetworkMode.OTHER -> TextResource(R.string.network_label_other, interfaceName)
                 }
-                ServerStore.transition(ServerPhase.RUNNING, "管理面板與核心已就緒，服務持續於背景執行", networkLabel)
+                ServerStore.transition(ServerPhase.RUNNING, TextResource(R.string.server_message_running), networkLabel)
                 ServerStore.log("Panel is ready at 127.0.0.1:2053")
-                updateNotification("服務執行中 · 127.0.0.1:2053")
+                updateNotification(getString(R.string.server_notification_running))
                 monitor(child, ticket, activeStartId)
                 return
             }
@@ -271,7 +272,7 @@ class XuiService : Service() {
                 }
                 if (!unexpectedExit) return@withLock
                 OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
-                ServerStore.transition(ServerPhase.ERROR, "服務意外停止，請重新啟動")
+                ServerStore.transition(ServerPhase.ERROR, TextResource(R.string.server_message_stopped_unexpectedly))
                 ServerStore.log("3x-ui process exited unexpectedly")
                 finishService(ticket, startId)
             }
@@ -288,7 +289,7 @@ class XuiService : Service() {
     }
 
     private suspend fun stopServer() {
-        ServerStore.transition(ServerPhase.STOPPING, "正在停止服務")
+        ServerStore.transition(ServerPhase.STOPPING, TextResource(R.string.server_message_stopping))
         val child = process
         process = null
         child?.destroy()
@@ -299,7 +300,7 @@ class XuiService : Service() {
         OwnedProcesses.terminate(paths)
         delay(200)
         OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
-        ServerStore.transition(ServerPhase.STOPPED, "服務已停止")
+        ServerStore.transition(ServerPhase.STOPPED, TextResource(R.string.server_message_stopped))
         ServerStore.log("Server processes stopped")
     }
 
@@ -318,11 +319,11 @@ class XuiService : Service() {
         )
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_server)
-            .setContentTitle("XrayDroid 本機伺服器")
+            .setContentTitle(getString(R.string.server_notification_title))
             .setContentText(text)
             .setContentIntent(activity)
             .setOngoing(true)
-            .addAction(Notification.Action.Builder(null, "停止服務", stop).build())
+            .addAction(Notification.Action.Builder(null, getString(R.string.server_notification_stop), stop).build())
             .build()
     }
 
@@ -344,7 +345,7 @@ class XuiService : Service() {
             OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
         }
         if (ServerStore.state.value.phase != ServerPhase.ERROR) {
-            ServerStore.transition(ServerPhase.STOPPED, "服務已停止")
+            ServerStore.transition(ServerPhase.STOPPED, TextResource(R.string.server_message_stopped))
         }
         super.onDestroy()
     }

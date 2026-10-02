@@ -30,8 +30,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import io.github.xraydroid.R
 import io.github.xraydroid.runtime.FrpConfigDocument
 import io.github.xraydroid.runtime.FrpConnectionPhase
 import io.github.xraydroid.runtime.FrpPhase
@@ -97,7 +99,9 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
     fun saveThen(action: (() -> Unit)? = null) {
         exportDraft { text, snapshot ->
             val saved = withContext(Dispatchers.IO) { FrpStore.saveConfig(context, text) }
-            feedback = if (saved) "設定已儲存；執行中的用戶端需重新啟動套用。" else "設定未儲存，請確認 TOML 格式與設定值。"
+            feedback = context.getString(
+                if (saved) R.string.frp_feedback_saved_running else R.string.frp_feedback_save_failed
+            )
             if (saved) {
                 draft = text
                 savedText = text
@@ -114,7 +118,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
             try {
                 val parsed = withContext(Dispatchers.Default) { parseFormDocument(text) }
                 if (parsed == null) {
-                    feedback = "無法切換至表單，請檢查 TOML 語法與欄位型別；原有草稿已保留。"
+                    feedback = context.getString(R.string.frp_feedback_form_switch_failed)
                 } else {
                     document = parsed
                     if (text == state.config) {
@@ -151,7 +155,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                         }.getOrNull()
                     }
                     if (imported == null) {
-                        feedback = "無法匯入；請選擇 UTF-8 編碼、大小不超過 1 MiB 的 TOML 設定檔。"
+                        feedback = context.getString(R.string.frp_feedback_import_failed)
                     } else {
                         pendingTemplate = imported
                     }
@@ -167,82 +171,91 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
             scope.launch {
                 try {
                     val path = withContext(Dispatchers.IO) { FrpStore.importSupportFile(context, uri) }
-                    feedback = path?.let { "檔案已匯入；在 TOML 中使用路徑：$it" } ?: "檔案匯入失敗，請確認檔案大小與名稱。"
+                    feedback = path?.let { context.getString(R.string.frp_feedback_support_imported, it) }
+                        ?: context.getString(R.string.frp_feedback_support_failed)
                 } finally {
                     working = false
                 }
             }
         }
     }
-    SettingsPage("frp", "返回設定", leave) {
+    SettingsPage(R.string.frp_title, R.string.nav_back_settings, leave) {
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("frpc 用戶端", style = MaterialTheme.typography.titleLarge)
+                    Text(stringResource(R.string.frp_client_title), style = MaterialTheme.typography.titleLarge)
                     Text(
                         when (state.phase) {
-                            FrpPhase.STOPPED -> "已停止"
-                            FrpPhase.VALIDATING -> "正在驗證設定"
-                            FrpPhase.STARTING -> "正在啟動"
-                            FrpPhase.RUNNING -> state.connection.phase.title
-                            FrpPhase.STOPPING -> "正在停止"
-                            FrpPhase.ERROR -> "用戶端發生問題"
+                            FrpPhase.STOPPED -> stringResource(R.string.frp_phase_stopped)
+                            FrpPhase.VALIDATING -> stringResource(R.string.frp_phase_validating)
+                            FrpPhase.STARTING -> stringResource(R.string.frp_phase_starting)
+                            FrpPhase.RUNNING -> stringResource(state.connection.phase.titleRes)
+                            FrpPhase.STOPPING -> stringResource(R.string.frp_phase_stopping)
+                            FrpPhase.ERROR -> stringResource(R.string.frp_phase_error)
                         },
                         style = MaterialTheme.typography.headlineSmall
                     )
                     if (state.phase == FrpPhase.RUNNING) {
-                        Text(state.connection.detail)
+                        Text(state.connection.detail.resolve())
                         if (state.connection.attempts > 0 && state.connection.phase != FrpConnectionPhase.CONNECTED) {
-                            Text("已嘗試連線 ${state.connection.attempts} 次", style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                stringResource(R.string.frp_connection_attempts, state.connection.attempts),
+                                style = MaterialTheme.typography.labelMedium
+                            )
                         }
                         if (state.connection.phase == FrpConnectionPhase.CONNECTED) {
                             val running = state.proxies.count { it.status == "running" }
                             Text(
                                 if (state.proxies.isEmpty()) {
-                                    "目前沒有代理狀態；僅使用訪客規則時不會列出代理。"
+                                    stringResource(R.string.frp_proxies_empty)
                                 } else {
-                                    "代理已啟用 $running / ${state.proxies.size}；代理啟用不代表本機目標服務可用。"
+                                    stringResource(R.string.frp_proxies_summary, running, state.proxies.size)
                                 }
                             )
                         }
                     }
-                    if (state.message.isNotBlank()) Text(state.message)
-                    Text("獨立於 3x-ui 與 Xray；使用 Android 系統預設網路。")
+                    state.message?.let { Text(it.resolve()) }
+                    Text(stringResource(R.string.frp_client_note))
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                     if (state.phase == FrpPhase.RUNNING || state.phase == FrpPhase.STARTING) {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            OutlinedButton(onClick = { saveThen(onRestart) }, enabled = canSave) { Text("重新啟動 frpc") }
-                            Button(onClick = onStop, enabled = !working) { Text("停止 frpc") }
+                            OutlinedButton(
+                                onClick = { saveThen(onRestart) },
+                                enabled = canSave
+                            ) { Text(stringResource(R.string.frp_restart)) }
+                            Button(onClick = onStop, enabled = !working) { Text(stringResource(R.string.frp_stop)) }
                         }
                     } else {
-                        Button(onClick = { saveThen(onStart) }, enabled = canSave) { Text("啟動 frpc") }
+                        Button(onClick = { saveThen(onStart) }, enabled = canSave) { Text(stringResource(R.string.frp_start)) }
                     }
                 }
             }
         }
         if (state.proxies.isNotEmpty()) {
-            item { Text("代理狀態", style = MaterialTheme.typography.titleLarge) }
+            item { Text(stringResource(R.string.frp_proxies_title), style = MaterialTheme.typography.titleLarge) }
             items(state.proxies) { proxy ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
                         Text("${proxy.name} · ${proxy.type}", style = MaterialTheme.typography.titleMedium)
-                        Text(frpProxyStatusLabel(proxy.status))
+                        Text(stringResource(frpProxyStatusLabel(proxy.status)))
                         if (proxy.remoteAddress.isNotBlank()) Text(proxy.remoteAddress)
                     }
                 }
             }
         }
         item {
-            Text("配置模式", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.frp_config_mode_title), style = MaterialTheme.typography.titleLarge)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (formMode) {
-                    Button(onClick = {}, enabled = initialized && !busy, modifier = Modifier.weight(1f)) { Text("表單配置") }
+                    Button(onClick = {}, enabled = initialized && !busy, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.frp_config_mode_form))
+                    }
                 } else {
                     OutlinedButton(
                         onClick = ::switchToForm,
                         enabled = initialized && !busy,
                         modifier = Modifier.weight(1f)
-                    ) { Text("表單配置") }
+                    ) { Text(stringResource(R.string.frp_config_mode_form)) }
                 }
                 if (formMode) {
                     OutlinedButton(
@@ -255,15 +268,17 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                         },
                         enabled = initialized && !busy && formValid,
                         modifier = Modifier.weight(1f)
-                    ) { Text("TOML 配置") }
+                    ) { Text(stringResource(R.string.frp_config_mode_toml)) }
                 } else {
-                    Button(onClick = {}, enabled = initialized && !busy, modifier = Modifier.weight(1f)) { Text("TOML 配置") }
+                    Button(onClick = {}, enabled = initialized && !busy, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.frp_config_mode_toml))
+                    }
                 }
             }
-            Text("兩種模式共用同一份草稿；表單修改會重新排版 TOML 並移除註解，其他設定值會保留。", style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.frp_config_mode_note), style = MaterialTheme.typography.bodySmall)
         }
         if (!initialized) {
-            item(key = "frp/loading") { Text("正在載入設定") }
+            item(key = "frp/loading") { Text(stringResource(R.string.frp_config_loading)) }
         } else if (formMode) {
             document?.let { current ->
                 frpConfigFormItems(
@@ -278,7 +293,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
             }
         } else {
             item {
-                Text("完整 TOML 設定", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.frp_config_toml_title), style = MaterialTheme.typography.titleLarge)
                 OutlinedTextField(
                     value = draft,
                     onValueChange = {
@@ -286,7 +301,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                         feedback = ""
                     },
                     enabled = initialized && !busy,
-                    label = { Text("frpc.toml") },
+                    label = { Text(stringResource(R.string.frp_config_toml_label)) },
                     minLines = 12,
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                     textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
@@ -299,29 +314,41 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                     onClick = {
                         exportDraft { text, _ ->
                             val valid = withContext(Dispatchers.IO) { FrpStore.validateConfig(context, text) }
-                            feedback = if (valid) "設定驗證通過；尚未儲存。" else "設定驗證失敗，請確認 TOML 格式與設定值。"
+                            feedback = context.getString(
+                                if (valid) R.string.frp_feedback_valid else R.string.frp_feedback_invalid
+                            )
                         }
                     },
                     enabled = canSave
-                ) { Text("驗證設定") }
-                Button(onClick = { saveThen() }, enabled = canSave) { Text("儲存設定") }
+                ) { Text(stringResource(R.string.frp_validate)) }
+                Button(onClick = { saveThen() }, enabled = canSave) { Text(stringResource(R.string.frp_save)) }
             }
             if (feedback.isNotBlank()) Text(feedback, modifier = Modifier.padding(top = 12.dp))
-            if (!formValid) Text("請先修正表單中的欄位，再切換模式、驗證或儲存。", color = MaterialTheme.colorScheme.error)
-            if (dirty) Text("草稿尚未儲存。", style = MaterialTheme.typography.labelMedium)
+            if (!formValid) {
+                Text(stringResource(R.string.frp_form_invalid_block), color = MaterialTheme.colorScheme.error)
+            }
+            if (dirty) Text(stringResource(R.string.frp_draft_unsaved), style = MaterialTheme.typography.labelMedium)
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = { importConfig.launch(arrayOf("*/*")) }, enabled = !busy && initialized) { Text("匯入 TOML") }
-                OutlinedButton(onClick = { importSupport.launch(arrayOf("*/*")) }, enabled = !busy && initialized) { Text("匯入憑證或檔案") }
+                OutlinedButton(onClick = { importConfig.launch(arrayOf("*/*")) }, enabled = !busy && initialized) {
+                    Text(stringResource(R.string.frp_import_toml))
+                }
+                OutlinedButton(onClick = { importSupport.launch(arrayOf("*/*")) }, enabled = !busy && initialized) {
+                    Text(stringResource(R.string.frp_import_support))
+                }
             }
-            Text("憑證與外掛所需檔案會複製至 App 私有目錄。請在設定中填入匯入後的相對路徑。", style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.frp_import_support_note), style = MaterialTheme.typography.bodySmall)
         }
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("允許外部權杖指令", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            stringResource(R.string.frp_unsafe_toggle),
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium
+                        )
                         Switch(
                             checked = state.allowUnsafeTokenCommand,
                             onCheckedChange = { enabled ->
@@ -338,7 +365,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                         )
                     }
                     Text(
-                        "預設關閉。啟用後允許 tokenSource 執行外部指令取得權杖；指令會使用此 App 的權限，執行檔路徑仍須符合 Android 限制。請先停止 frpc 再變更。",
+                        stringResource(R.string.frp_unsafe_note),
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -348,22 +375,24 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
     if (confirmLeave) {
         AlertDialog(
             onDismissRequest = { confirmLeave = false },
-            title = { Text("捨棄未儲存的草稿？") },
-            text = { Text("已儲存的 frpc 設定會保留。") },
+            title = { Text(stringResource(R.string.frp_discard_dialog_title)) },
+            text = { Text(stringResource(R.string.frp_discard_dialog_text)) },
             confirmButton = {
                 TextButton(onClick = {
                     confirmLeave = false
                     onBack()
-                }) { Text("捨棄並返回") }
+                }) { Text(stringResource(R.string.frp_discard_confirm)) }
             },
-            dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text("繼續編輯") } }
+            dismissButton = {
+                TextButton(onClick = { confirmLeave = false }) { Text(stringResource(R.string.frp_discard_cancel)) }
+            }
         )
     }
     pendingTemplate?.let { replacement ->
         AlertDialog(
             onDismissRequest = { pendingTemplate = null },
-            title = { Text("取代目前草稿？") },
-            text = { Text("這會取代完整 TOML 草稿，包括進階設定；確認後仍需驗證並儲存。") },
+            title = { Text(stringResource(R.string.frp_replace_dialog_title)) },
+            text = { Text(stringResource(R.string.frp_replace_dialog_text)) },
             confirmButton = {
                 TextButton(onClick = {
                     if (!working) {
@@ -387,9 +416,11 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                             }
                         }
                     }
-                }) { Text("取代草稿") }
+                }) { Text(stringResource(R.string.frp_replace_confirm)) }
             },
-            dismissButton = { TextButton(onClick = { pendingTemplate = null }) { Text("取消") } }
+            dismissButton = {
+                TextButton(onClick = { pendingTemplate = null }) { Text(stringResource(R.string.frp_replace_cancel)) }
+            }
         )
     }
 }

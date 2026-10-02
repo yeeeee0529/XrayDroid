@@ -46,7 +46,7 @@ class NetworkSwitchLifecycleTest {
             val originalCore = requireNotNull(ownedPid(xrayPath))
             assertTrue(
                 "Applied interface label must identify the selected interface",
-                ServerStore.state.value.outboundNetworkLabel?.contains(interfaceName) == true
+                ServerStore.state.value.outboundNetworkLabel?.resolve(context)?.contains(interfaceName) == true
             )
 
             val missingName = "xraydroid-test-unavailable"
@@ -117,7 +117,10 @@ class NetworkSwitchLifecycleTest {
             val wifiCore = requireNotNull(ownedPid(xrayPath))
             val wifiLabel = requireNotNull(ServerStore.state.value.outboundNetworkLabel)
             val wifiInterface = requireNotNull(NetworkStore.state.value.selectedOption).interfaceName
-            assertTrue("Applied network label must identify selected Wi-Fi interface", wifiLabel.contains(wifiInterface))
+            assertTrue(
+                "Applied network label must identify selected Wi-Fi interface",
+                wifiLabel.resolve(context).contains(wifiInterface)
+            )
 
             select(OutboundNetworkMode.SYSTEM)
             awaitCondition("Selecting the system network must restart the panel and core") {
@@ -128,7 +131,7 @@ class NetworkSwitchLifecycleTest {
             val systemPanel = requireNotNull(ownedPid(panelPath))
             assertTrue(
                 "Applied system network label must differ from Wi-Fi selection",
-                ServerStore.state.value.outboundNetworkLabel != wifiLabel
+                ServerStore.state.value.outboundNetworkLabel?.resolve(context) != wifiLabel.resolve(context)
             )
 
             select(OutboundNetworkMode.ETHERNET)

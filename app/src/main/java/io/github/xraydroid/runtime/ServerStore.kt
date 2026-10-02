@@ -1,5 +1,6 @@
 package io.github.xraydroid.runtime
 
+import io.github.xraydroid.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -8,18 +9,18 @@ enum class ServerPhase { STOPPED, STARTING, RUNNING, STOPPING, WAITING_FOR_NETWO
 
 data class ServerState(
     val phase: ServerPhase = ServerPhase.STOPPED,
-    val message: String = "啟動後即可開啟管理面板",
+    val message: TextResource? = TextResource(R.string.server_message_idle),
     val logs: List<String> = emptyList(),
     val panelUrl: String = "http://127.0.0.1:2053/",
     val startedAt: Long? = null,
-    val outboundNetworkLabel: String? = null
+    val outboundNetworkLabel: TextResource? = null
 )
 
 object ServerStore {
     private val mutableState = MutableStateFlow(ServerState())
     val state = mutableState.asStateFlow()
 
-    fun transition(phase: ServerPhase, message: String, outboundNetworkLabel: String? = null) {
+    fun transition(phase: ServerPhase, message: TextResource?, outboundNetworkLabel: TextResource? = null) {
         mutableState.update {
             it.copy(
                 phase = phase,

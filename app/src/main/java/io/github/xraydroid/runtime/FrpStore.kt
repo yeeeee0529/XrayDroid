@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.AtomicFile
 import androidx.core.content.edit
+import io.github.xraydroid.R
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
@@ -23,7 +24,7 @@ data class FrpProxyStatus(val name: String, val type: String, val status: String
 
 data class FrpState(
     val phase: FrpPhase = FrpPhase.STOPPED,
-    val message: String = "設定 frps 伺服器後即可啟動",
+    val message: TextResource? = TextResource(R.string.frp_message_idle),
     val config: String = "",
     val loaded: Boolean = false,
     val revision: Long = 0,
@@ -63,7 +64,7 @@ object FrpStore {
                     val allowUnsafe = app.getSharedPreferences("frp", Context.MODE_PRIVATE).getBoolean("allow_token_command", false)
                     mutableState.update { it.copy(config = text, loaded = true, allowUnsafeTokenCommand = allowUnsafe) }
                 }.onFailure {
-                    mutableState.update { it.copy(loaded = true, message = "無法讀取 frp 設定，請重新匯入") }
+                    mutableState.update { it.copy(loaded = true, message = TextResource(R.string.frp_message_config_unreadable)) }
                 }
             }
         }
@@ -97,18 +98,20 @@ object FrpStore {
                     config = text,
                     loaded = true,
                     revision = it.revision + 1,
-                    message = if (it.phase == FrpPhase.RUNNING) "設定已儲存，重新啟動 frp 後套用" else "設定已驗證並儲存"
+                    message = TextResource(
+                        if (it.phase == FrpPhase.RUNNING) R.string.frp_message_saved_running else R.string.frp_message_saved
+                    )
                 )
             }
         }.fold(onSuccess = { true }, onFailure = {
-            message("設定儲存失敗，原有設定已保留")
+            message(TextResource(R.string.frp_message_save_failed))
             false
         })
     }
 
     private fun validate(context: Context, text: String): Boolean {
         if (text.isBlank() || text.toByteArray(Charsets.UTF_8).size > MAX_CONFIG_BYTES) {
-            message("請輸入有效的 TOML 設定，大小不得超過 1 MiB")
+            message(TextResource(R.string.frp_message_config_invalid))
             return false
         }
         return runCatching {
@@ -122,10 +125,10 @@ object FrpStore {
                 candidate.delete()
             }
         }.fold(onSuccess = {
-            message(if (it) "設定驗證通過" else "設定驗證失敗，請檢查 TOML 語法、欄位與檔案路徑")
+            message(TextResource(if (it) R.string.frp_message_valid else R.string.frp_message_invalid))
             it
         }, onFailure = {
-            message("無法驗證設定，請確認 frpc 核心與檔案路徑")
+            message(TextResource(R.string.frp_message_verify_failed))
             false
         })
     }
@@ -164,12 +167,12 @@ object FrpStore {
                 throw error
             }
         }.getOrElse {
-            message("檔案匯入失敗，大小不得超過 16 MiB")
+            message(TextResource(R.string.frp_message_import_failed))
             null
         }
     }
 
-    internal fun transition(phase: FrpPhase, message: String) {
+    internal fun transition(phase: FrpPhase, message: TextResource?) {
         mutableState.update { it.copy(phase = phase, message = message, connection = FrpConnectionStatus(), proxies = emptyList()) }
     }
 
@@ -184,7 +187,7 @@ object FrpStore {
         }
     }
 
-    internal fun message(message: String) {
+    internal fun message(message: TextResource) {
         mutableState.update { it.copy(message = message) }
     }
 }

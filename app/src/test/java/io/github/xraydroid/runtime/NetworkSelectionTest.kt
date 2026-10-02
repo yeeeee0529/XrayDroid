@@ -1,5 +1,6 @@
 package io.github.xraydroid.runtime
 
+import io.github.xraydroid.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -25,7 +26,7 @@ class NetworkSelectionTest {
         val rejected = listOf(
             option("tun0", OutboundNetworkMode.VPN).copy(handle = null),
             option("tun0", OutboundNetworkMode.VPN).copy(isUp = false),
-            option("tun0", OutboundNetworkMode.VPN).copy(unavailableReason = "Unavailable")
+            option("tun0", OutboundNetworkMode.VPN).copy(unavailableReason = R.string.network_reason_restricted)
         )
         rejected.forEach { vpn ->
             assertNull(resolveInterfaceSelection(OutboundNetworkMode.SYSTEM, "tun0", listOf(wifi, vpn)))

@@ -37,6 +37,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -44,6 +45,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.github.xraydroid.BuildConfig
+import io.github.xraydroid.R
 import io.github.xraydroid.runtime.ServerPhase
 import io.github.xraydroid.runtime.ServerState
 
@@ -75,11 +77,12 @@ fun ServerDashboard(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        val settingsLabel = stringResource(R.string.dashboard_settings)
                         Text("XrayDroid", style = MaterialTheme.typography.headlineLarge)
                         TextButton(
                             onClick = onOpenSettings,
-                            modifier = Modifier.semantics { contentDescription = "設定" }
-                        ) { Text("設定") }
+                            modifier = Modifier.semantics { contentDescription = settingsLabel }
+                        ) { Text(settingsLabel) }
                     }
                 }
                 item {
@@ -102,14 +105,14 @@ fun ServerDashboard(
                             Modifier.padding(24.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Text("管理面板", style = MaterialTheme.typography.titleLarge)
+                            Text(stringResource(R.string.dashboard_panel_title), style = MaterialTheme.typography.titleLarge)
                             Text(
-                                "在瀏覽器中管理入站連線、使用者與流量。",
+                                stringResource(R.string.dashboard_panel_description),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                "首次登入使用 3x-ui 預設帳號；請在面板設定中變更密碼。",
+                                stringResource(R.string.dashboard_panel_credentials),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -126,9 +129,9 @@ fun ServerDashboard(
                                 enabled = running && !busy,
                                 modifier = Modifier.fillMaxWidth().height(56.dp),
                                 shape = RoundedCornerShape(20.dp)
-                            ) { Text("開啟管理面板") }
+                            ) { Text(stringResource(R.string.dashboard_panel_open)) }
                             if (!running) {
-                                Text("啟動服務後即可開啟。", style = MaterialTheme.typography.bodySmall)
+                                Text(stringResource(R.string.dashboard_panel_requires_service), style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
@@ -139,9 +142,9 @@ fun ServerDashboard(
                         color = MaterialTheme.colorScheme.surfaceContainerLow
                     ) {
                         Column(Modifier.fillMaxWidth().padding(20.dp)) {
-                            Text("核心版本", style = MaterialTheme.typography.titleMedium)
-                            VersionRow("3x-ui", BuildConfig.XUI_VERSION)
-                            VersionRow("Xray-core", BuildConfig.XRAY_VERSION)
+                            Text(stringResource(R.string.dashboard_versions_title), style = MaterialTheme.typography.titleMedium)
+                            VersionRow(stringResource(R.string.dashboard_core_3xui), BuildConfig.XUI_VERSION)
+                            VersionRow(stringResource(R.string.dashboard_core_xray), BuildConfig.XRAY_VERSION)
                         }
                     }
                 }
@@ -151,20 +154,24 @@ fun ServerDashboard(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("服務日誌", style = MaterialTheme.typography.titleLarge)
+                        Text(stringResource(R.string.dashboard_logs_title), style = MaterialTheme.typography.titleLarge)
                         TextButton(onClick = { logsExpanded = !logsExpanded }) {
-                            Text(if (logsExpanded) "收合日誌" else "展開日誌")
+                            Text(
+                                stringResource(
+                                    if (logsExpanded) R.string.dashboard_logs_collapse else R.string.dashboard_logs_expand
+                                )
+                            )
                         }
                     }
                     if (!logsExpanded) {
                         Text(
-                            "啟動遇到問題時，展開日誌查看詳細資訊。",
+                            stringResource(R.string.dashboard_logs_hint),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     } else if (state.logs.isEmpty()) {
                         Text(
-                            "尚無日誌。啟動服務後，執行訊息會顯示在這裡。",
+                            stringResource(R.string.dashboard_logs_empty),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -191,7 +198,7 @@ fun ServerDashboard(
                     if (state.logs.isNotEmpty()) {
                         item {
                             Text(
-                                "顯示最近 ${minOf(state.logs.size, 80)} 筆日誌",
+                                stringResource(R.string.dashboard_logs_shown_count, minOf(state.logs.size, 80)),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -234,41 +241,46 @@ private fun StatusCard(state: ServerState, onStart: () -> Unit, onStop: () -> Un
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Box(Modifier.size(10.dp).background(contentColor, CircleShape))
-                Text("本機服務", style = MaterialTheme.typography.labelLarge)
+                Text(stringResource(R.string.dashboard_service_label), style = MaterialTheme.typography.labelLarge)
             }
             Text(
-                text = when (state.phase) {
-                    ServerPhase.WAITING_FOR_NETWORK -> "等待指定網路"
-                    ServerPhase.STOPPED -> "準備就緒"
-                    ServerPhase.STARTING -> "正在啟動"
-                    ServerPhase.RUNNING -> "服務運作中"
-                    ServerPhase.STOPPING -> "正在停止"
-                    ServerPhase.ERROR -> "服務發生問題"
-                },
+                text = stringResource(
+                    when (state.phase) {
+                        ServerPhase.WAITING_FOR_NETWORK -> R.string.dashboard_status_waiting_network_title
+                        ServerPhase.STOPPED -> R.string.dashboard_status_stopped_title
+                        ServerPhase.STARTING -> R.string.dashboard_status_starting_title
+                        ServerPhase.RUNNING -> R.string.dashboard_status_running_title
+                        ServerPhase.STOPPING -> R.string.dashboard_status_stopping_title
+                        ServerPhase.ERROR -> R.string.dashboard_status_error_title
+                    }
+                ),
                 style = MaterialTheme.typography.headlineLarge,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
             )
             Text(
-                text = when (state.phase) {
-                    ServerPhase.WAITING_FOR_NETWORK -> "所選網路目前無法使用，連線恢復後會繼續執行。"
-                    ServerPhase.STOPPED -> "啟動 3x-ui 與 Xray，開始管理你的連線。"
-                    ServerPhase.STARTING -> "正在準備核心與管理面板，請稍候。"
-                    ServerPhase.RUNNING -> "3x-ui 已啟動。關閉此畫面後，服務仍會在背景運作。"
-                    ServerPhase.STOPPING -> "正在關閉管理面板與核心，請稍候。"
-                    ServerPhase.ERROR -> "請查看服務日誌，排除問題後重新啟動。"
-                },
+                text = stringResource(
+                    when (state.phase) {
+                        ServerPhase.WAITING_FOR_NETWORK -> R.string.dashboard_status_waiting_network_detail
+                        ServerPhase.STOPPED -> R.string.dashboard_status_stopped_detail
+                        ServerPhase.STARTING -> R.string.dashboard_status_starting_detail
+                        ServerPhase.RUNNING -> R.string.dashboard_status_running_detail
+                        ServerPhase.STOPPING -> R.string.dashboard_status_stopping_detail
+                        ServerPhase.ERROR -> R.string.dashboard_status_error_detail
+                    }
+                ),
                 style = MaterialTheme.typography.bodyLarge
             )
             state.outboundNetworkLabel?.let { label ->
-                Text("出站網路：$label", style = MaterialTheme.typography.labelLarge)
+                Text(stringResource(R.string.dashboard_outbound_network, label.resolve()), style = MaterialTheme.typography.labelLarge)
             }
             if (busy) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = contentColor)
             }
-            if (failed && state.message.isNotBlank()) {
+            val failure = state.message
+            if (failed && failure != null) {
                 SelectionContainer {
                     Text(
-                        state.message,
+                        failure.resolve(),
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = FontFamily.Monospace
                         )
@@ -283,19 +295,19 @@ private fun StatusCard(state: ServerState, onStart: () -> Unit, onStop: () -> Un
                         border = BorderStroke(1.dp, contentColor),
                         modifier = Modifier.weight(1f).height(56.dp),
                         shape = RoundedCornerShape(20.dp)
-                    ) { Text("重新啟動") }
+                    ) { Text(stringResource(R.string.dashboard_restart)) }
                     Button(
                         onClick = onStop,
                         modifier = Modifier.weight(1f).height(56.dp),
                         shape = RoundedCornerShape(20.dp)
-                    ) { Text("停止服務") }
+                    ) { Text(stringResource(R.string.dashboard_stop)) }
                 }
             } else if (waiting) {
                 Button(
                     onClick = onStop,
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                     shape = RoundedCornerShape(20.dp)
-                ) { Text("停止服務") }
+                ) { Text(stringResource(R.string.dashboard_stop)) }
             } else {
                 Button(
                     onClick = onStart,
@@ -304,7 +316,7 @@ private fun StatusCard(state: ServerState, onStart: () -> Unit, onStop: () -> Un
                     shape = RoundedCornerShape(24.dp)
                 ) {
                     Text(
-                        if (failed) "再次啟動服務" else "啟動服務",
+                        stringResource(if (failed) R.string.dashboard_start_again else R.string.dashboard_start),
                         style = MaterialTheme.typography.titleMedium
                     )
                 }
