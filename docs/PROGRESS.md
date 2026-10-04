@@ -1,6 +1,22 @@
 # 進度與驗證紀錄
 
-日期：2026-10-02。
+日期：2026-10-04。
+
+## Launcher 圖示更換（2026-10-04）
+
+- 依使用者需求設計新 launcher 圖示：Android 機器人圓頂頭剪影、兩支天線交叉成 X；依使用者第二輪指示，頭部作為「伺服器面板」——原眼睛位置改為兩顆伺服器 LED（左綠 `#00E676`、右琥珀 `#FFC400`，各含深色底座），頭部下半部加三條機架橫向插槽線。
+- 配色：機器人本體為 Android 品牌綠 `#3DDC84`，背景為深青綠垂直漸層（`#0D5C54` → `#021815`），呼應 App 既有 accent `#006C67`；LED 底座與插槽線用 `#05322C`。
+- 採 adaptive icon 三層結構（background／foreground／monochrome），monochrome 剪影支援 Android 13+ themed icon；圖層皆為 108×108dp，關鍵元素位於中央直徑 72dp 安全區內。資源目錄使用 `mipmap-anydpi`（minSdk 26 下 `-v26` 限定詞會被 lint `ObsoleteSdkInt` 拒絕）。Manifest 的 `android:icon`／`android:roundIcon` 改指 `@mipmap/ic_launcher`；原 `ic_server` 保留為前景服務通知 small icon。Play Console 用 512×512 PNG 位於 `art/ic_launcher-playstore.png`。
+
+### 已完成的驗證
+
+- 以等效 SVG 在 headless 瀏覽器渲染，對 circle、squircle、rounded、teardrop、square 五種遮罩與 160／96／48／32px 尺寸逐一視覺檢查：X 字與機器人頭在各遮罩下完整可辨，小尺寸仍可讀；第一版 X 交叉點與圓頂間的縫隙瑕疵（放大後可見深色小缺口）已加大圓頂修正，512×512 最終渲染確認無瑕疵。
+- `./gradlew :app:ktlintFormat`、`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 全部通過（BUILD SUCCESSFUL）；APK 內確認包含 `res/mipmap-anydpi-v21/ic_launcher.xml` 與 `ic_launcher_round.xml` adaptive icon 資源。
+- 環境問題（與本次變更無關）：shell 預設 JDK 27 使 Gradle 8.13 在啟動時崩潰（`IllegalArgumentException: 27`，Kotlin 內嵌 `JavaVersion.parse` 不認識），改用 Zulu JDK 17 執行。`res` 目錄重新命名後 `mergeDebugResources` 的增量快取略過新目錄（aapt2 直接編譯可正常處理 `mipmap-anydpi`），`:app:clean` 後恢復正常。
+
+### 未驗證
+
+- 真機 launcher 的實際顯示效果（含 themed icon 單色剪影與各 OEM 遮罩形狀）尚未在裝置上驗證；目前以上述等效 SVG 遮罩渲染作為依據。
 
 ## 使用者可見文字抽出至資源（2026-10-02）
 

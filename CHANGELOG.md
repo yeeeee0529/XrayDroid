@@ -2,6 +2,8 @@
 
 ## 尚未發布
 
+- 更換 launcher 圖示：Android 機器人圓頂頭剪影搭配交叉成 X 的天線，頭部作為伺服器面板（綠色與琥珀色 LED、機架橫向插槽線）；採 adaptive icon 並提供 themed icon 單色剪影，另附 Play Console 用 512×512 PNG。
+
 - 使用者可見文字集中至 `res/values/strings.xml`（預設繁體中文）；runtime 狀態改以資源 ID 加格式參數傳遞，UI 與通知在顯示前解析，日後可直接新增其他語系。
 
 - 面板本機統計不再等待外部 IP 或 CPU 拓樸查詢；外部 IP 使用一次性背景查詢與共用期限，Android 靜態資訊與磁碟容量低頻更新，確認權限拒絕的統計延後重試。磁碟使用量最多延遲 30 秒。

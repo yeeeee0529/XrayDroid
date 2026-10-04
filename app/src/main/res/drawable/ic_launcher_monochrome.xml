@@ -1,0 +1,20 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 單色剪影，僅 alpha 生效 -->
+    <path
+        android:pathData="M42,52 L66,28"
+        android:strokeColor="#000000"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M66,52 L42,28"
+        android:strokeColor="#000000"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+    <path
+        android:fillColor="#000000"
+        android:pathData="M38,83 L70,83 A4,4 0 0 0 74,79 L74,63 A20,20 0 0 0 34,63 L34,79 A4,4 0 0 0 38,83 Z" />
+</vector>

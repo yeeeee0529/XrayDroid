@@ -1,0 +1,51 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 天線交叉成 X 字 -->
+    <path
+        android:pathData="M42,52 L66,28"
+        android:strokeColor="#3DDC84"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M66,52 L42,28"
+        android:strokeColor="#3DDC84"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+    <!-- Android 機器人頭部剪影，作為伺服器面板 -->
+    <path
+        android:fillColor="#3DDC84"
+        android:pathData="M38,83 L70,83 A4,4 0 0 0 74,79 L74,63 A20,20 0 0 0 34,63 L34,79 A4,4 0 0 0 38,83 Z" />
+    <!-- 伺服器 LED 深色底座 -->
+    <path
+        android:fillColor="#05322C"
+        android:pathData="M46,61 m-4.2,0 a4.2,4.2 0 1,0 8.4,0 a4.2,4.2 0 1,0 -8.4,0 Z" />
+    <path
+        android:fillColor="#05322C"
+        android:pathData="M62,61 m-4.2,0 a4.2,4.2 0 1,0 8.4,0 a4.2,4.2 0 1,0 -8.4,0 Z" />
+    <!-- LED 燈號：綠色與琥珀色 -->
+    <path
+        android:fillColor="#00E676"
+        android:pathData="M46,61 m-2.2,0 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0 Z" />
+    <path
+        android:fillColor="#FFC400"
+        android:pathData="M62,61 m-2.2,0 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0 Z" />
+    <!-- 機架橫向插槽線 -->
+    <path
+        android:pathData="M41,69 L67,69"
+        android:strokeColor="#05322C"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M41,73.5 L67,73.5"
+        android:strokeColor="#05322C"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M41,78 L67,78"
+        android:strokeColor="#05322C"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round" />
+</vector>
