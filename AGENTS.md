@@ -12,6 +12,8 @@
 
 ## Conventions
 - Use English identifiers and diagnostics, Traditional Chinese user-facing text and new source comments.
+- User-facing text lives in `app/src/main/res/values/strings.xml` (zh-TW default) with `values-en` and
+  `values-zh-rCN`; keep the three in sync — same names, same order — and use `<plurals>` for counts.
 - Keep root README concise and cross-link `docs/zh-TW/README.md` and `docs/en/README.md`; update all three when behavior changes.
 - Use graph tools for code discovery; index the project before discovering unindexed code.
 - Do not read secrets or backend runtime logs; native lifecycle events intentionally exclude raw backend output.

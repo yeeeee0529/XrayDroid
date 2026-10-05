@@ -105,7 +105,7 @@ filesDir/server/frp/{frpc.toml,support/}
 正常停止先發送 SIGTERM，再於逾時後強制停止。異常清理只比對相同 App UID 與確切執行檔路徑，避免影響其他 Xray。
 上游修補另外處理父程序死亡；前景服務不能保證抵抗所有系統回收、Doze（低耗電模式）或使用者強制停止。
 
-使用者可見文字集中在 `app/src/main/res/values/strings.xml`，預設語系為繁體中文。
+使用者可見文字集中在 `app/src/main/res/values/strings.xml`，預設語系為繁體中文，另有 `values-en`（English）與 `values-zh-rCN`（简体中文）。
 `runtime` 的狀態改以 `TextResource`（資源 ID 加格式參數）傳遞，由 Compose 或前景服務在顯示前解析，
 因此狀態中不保存已在地化的字串，日後新增 `values-<locale>/strings.xml` 即可支援其他語系。
 

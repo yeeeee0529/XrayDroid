@@ -24,7 +24,7 @@ data class FrpProxyStatus(val name: String, val type: String, val status: String
 
 data class FrpState(
     val phase: FrpPhase = FrpPhase.STOPPED,
-    val message: TextResource? = TextResource(R.string.frp_message_idle),
+    val message: TextResource? = null,
     val config: String = "",
     val loaded: Boolean = false,
     val revision: Long = 0,

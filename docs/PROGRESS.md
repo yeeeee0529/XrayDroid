@@ -2,6 +2,28 @@
 
 日期：2026-10-05。
 
+## 多語系字串與文案校訂（2026-10-05）
+
+- 依使用者提供的校訂清單調整繁中文案：16 條改寫（通知權限、面板預設帳密、出站網路說明、frp 用戶端與連線狀態等），並刪除 `frp_message_idle` 與 `frp_client_note` 兩條字串（328 → 326）。
+- 兩條被刪除的字串原本由程式引用，一併移除 `FrpState.message` 的預設值（改為 `null`）與 `ui/FrpScreen.kt` 的 `frp_client_note` 顯示行；frp 閒置狀態因此不再顯示任何訊息列。
+- 新增 `values-en`（English）與 `values-zh-rCN`（简体中文）兩份完整翻譯，各 326 筆，資源名稱與順序與 `values/` 完全一致。技術專有名詞（3x-ui、Xray、frp、frpc、TOML、TLS、OIDC、QUIC、STUN、tcpMux 等）不翻譯；`app_name` 三語系皆為 `XrayDroid`。
+- `dashboard_logs_shown_count` 與 `frp_connection_attempts` 改為 `<plurals>`：英文提供 one／other 兩種形式，中文僅 other；呼叫端由 `stringResource`／`R.string` 改為 `pluralStringResource`／`R.plurals`。
+- 三份 README 的語系說明更新為已內建 en 與 zh-rCN。
+
+### 已完成的驗證
+
+- 三份字串資源交叉比對：各 326 筆，名稱與順序完全一致；格式參數（`%1$s`、`%1$d`、`%2$d`）逐 key 比對相同；三份 XML 均可解析。
+- 簡中檔以台灣用語清單（網路、伺服器、使用者、檔案、預設、裝置、匯入、權限、連線、設定、儲存、偵測、網域、憑證、連接埠等）掃描無殘留；與繁中來源完全相同者 27 筆，逐筆確認皆為簡繁同形字（如「正在停止」「取消」「值」）。
+- `./gradlew :app:ktlintFormat` 通過；`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 全部通過（BUILD SUCCESSFUL）。Android lint 為 0 errors／0 warnings，保留既有 2 個 `AutoboxingStateCreation` hints；JVM 單元測試 23 項、0 failures／0 errors／0 skipped。
+- APK（`app/build/outputs/apk/debug/app-debug.apk`）以 aapt2 檢查：確認含 `(en)` 與 `(zh-rCN)` 設定，複數資源三語系形式正確（en 為 one／other，zh-TW 與 zh-rCN 僅 other）。
+- 首次 lint 因英文數量詞觸發 2 個 `PluralsCandidate` error 而中斷建置，改用 `<plurals>` 後通過；未以 lint baseline 或 `tools:ignore` 壓抑。
+
+### 未驗證
+
+- 三種語系在真機上的實際顯示（簡中裝置的資源挑選、英文較長字串造成的版面換行與截斷）尚未於裝置驗證。
+- 僅提供 `values-zh-rCN`；其他簡體地區設定（如 zh-Hans-SG）是否套用或回退到預設繁中，未逐一確認。
+- frp 閒置狀態移除訊息列後的畫面呈現，尚未在裝置上檢視。
+
 ## 指定 wlan0 綁定失敗的根因確認與排除（2026-10-05）
 
 - 使用者回報：修改 Wi-Fi 網卡 MAC 後，出站網路頁的 wlan0 顯示「目前無法綁定這個網路；可重新偵測後重試。」，核心停在「等待指定網路」。此前數輪把此現象記為未解，並把熱點與 MAC 列為環境條件。

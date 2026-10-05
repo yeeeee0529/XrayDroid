@@ -37,6 +37,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -197,8 +198,9 @@ fun ServerDashboard(
                     }
                     if (state.logs.isNotEmpty()) {
                         item {
+                            val shown = minOf(state.logs.size, 80)
                             Text(
-                                stringResource(R.string.dashboard_logs_shown_count, minOf(state.logs.size, 80)),
+                                pluralStringResource(R.plurals.dashboard_logs_shown_count, shown, shown),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -199,7 +200,11 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                         Text(state.connection.detail.resolve())
                         if (state.connection.attempts > 0 && state.connection.phase != FrpConnectionPhase.CONNECTED) {
                             Text(
-                                stringResource(R.string.frp_connection_attempts, state.connection.attempts),
+                                pluralStringResource(
+                                    R.plurals.frp_connection_attempts,
+                                    state.connection.attempts,
+                                    state.connection.attempts
+                                ),
                                 style = MaterialTheme.typography.labelMedium
                             )
                         }
@@ -215,7 +220,6 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                         }
                     }
                     state.message?.let { Text(it.resolve()) }
-                    Text(stringResource(R.string.frp_client_note))
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                     if (state.phase == FrpPhase.RUNNING || state.phase == FrpPhase.STARTING) {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

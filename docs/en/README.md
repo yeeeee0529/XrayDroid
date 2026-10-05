@@ -105,7 +105,7 @@ It installs geodata and sets `XUI_XRAY_BINARY`, `XUI_BIN_FOLDER`, `XUI_DB_FOLDER
 Shutdown sends SIGTERM and escalates after a timeout. Recovery matches the same application UID and exact executable paths, never broad process names.
 The upstream patch additionally protects against parent death; foreground services cannot guarantee survival against all process reclamation, Doze, or user force-stop actions.
 
-All user-visible text lives in `app/src/main/res/values/strings.xml`, whose default locale is Traditional Chinese.
+All user-visible text lives in `app/src/main/res/values/strings.xml`, whose default locale is Traditional Chinese; `values-en` (English) and `values-zh-rCN` (Simplified Chinese) provide the other translations.
 Runtime state carries `TextResource` values (a resource id plus format arguments) that Compose or the foreground service
 resolves at display time, so no localized string is stored in state; adding `values-<locale>/strings.xml` is enough to
 support another locale.
