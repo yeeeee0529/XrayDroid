@@ -46,7 +46,11 @@ private fun SettingsEntry(@StringRes title: Int, @StringRes description: Int, on
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(stringResource(title), style = MaterialTheme.typography.titleLarge)
-            Text(stringResource(description), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                stringResource(description),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

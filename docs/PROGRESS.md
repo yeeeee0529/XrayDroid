@@ -2,6 +2,22 @@
 
 日期：2026-10-05。
 
+## 介面間距與排版可讀性調整（2026-10-05）
+
+- 不改動 Material 3 Expressive 設計與任何字串內容，僅調整版面間距與文字層次。
+- `FrpConfigForm.kt`：下拉選擇（FrpChoice）標籤與按鈕之間加 8 dp 間距，選單改以 Box 錨定於按鈕；開關列（FrpSwitch）加水平 16 dp 與垂直 4 dp 間距；可收合區段標題改為靠左對齊（原在按鈕中置中）。
+- `FrpScreen.kt`：配置模式、TOML 編輯、驗證／儲存、匯入四個多元素 item 區塊包進 `Column(spacedBy(12.dp))`（原先區塊內元素零間距）；代理狀態卡片加 4 dp 行距，遠端位址改等寬小字次要色；重新啟動／停止、驗證／儲存、匯入等並排按鈕加 `weight(1f)` 避免窄螢幕擠壓；不安全開關列文字與 Switch 加 16 dp 間距；輔助說明文字統一為次要色。
+- `ServerDashboard.kt`：日誌標題列與提示／空狀態文字包進 `Column(spacedBy(8.dp))`（原零間距）；「啟動服務後即可開啟」提示改次要色。
+- `SettingsScreen.kt`：設定項描述改次要色，與標題區分層次。
+
+### 已完成的驗證
+
+- `./gradlew :app:ktlintFormat` 通過；`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 全部通過（BUILD SUCCESSFUL）。
+
+### 未驗證
+
+- 未連接裝置，實際視覺呈現（含三語系長字串的換行情形）尚未於裝置檢視。
+
 ## 多語系字串與文案校訂（2026-10-05）
 
 - 依使用者提供的校訂清單調整繁中文案：16 條改寫（通知權限、面板預設帳密、出站網路說明、frp 用戶端與連線狀態等），並刪除 `frp_message_idle` 與 `frp_client_note` 兩條字串（328 → 326）。

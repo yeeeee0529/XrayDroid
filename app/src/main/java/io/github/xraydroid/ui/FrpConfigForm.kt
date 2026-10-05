@@ -2,6 +2,7 @@ package io.github.xraydroid.ui
 
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -437,7 +438,11 @@ private fun FrpSection(title: String, state: FrpFormState, id: String, content: 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             TextButton(onClick = { state.expandedSections[id] = !expanded }, modifier = Modifier.fillMaxWidth()) {
-                Text("${if (expanded) "▾" else "▸"} $title", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "${if (expanded) "▾" else "▸"} $title",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f)
+                )
             }
             if (expanded) content()
         }
@@ -529,7 +534,11 @@ private fun FrpFields(
 
 @Composable
 private fun FrpSwitch(@StringRes label: Int, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Text(stringResource(label), modifier = Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
     }
@@ -538,22 +547,24 @@ private fun FrpSwitch(@StringRes label: Int, checked: Boolean, enabled: Boolean,
 @Composable
 private fun FrpChoice(@StringRes label: Int, value: String, choices: List<String>, enabled: Boolean, onChange: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    Column {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(label), style = MaterialTheme.typography.labelLarge)
-        OutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-            Text(if (value.isEmpty()) stringResource(R.string.frp_form_default_choice) else value)
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            choices.forEach { item ->
-                DropdownMenuItem(
-                    text = {
-                        Text(if (item.isEmpty()) stringResource(R.string.frp_form_disabled_choice) else item)
-                    },
-                    onClick = {
-                        expanded = false
-                        onChange(item)
-                    }
-                )
+        Box {
+            OutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+                Text(if (value.isEmpty()) stringResource(R.string.frp_form_default_choice) else value)
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                choices.forEach { item ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(if (item.isEmpty()) stringResource(R.string.frp_form_disabled_choice) else item)
+                        },
+                        onClick = {
+                            expanded = false
+                            onChange(item)
+                        }
+                    )
+                }
             }
         }
     }

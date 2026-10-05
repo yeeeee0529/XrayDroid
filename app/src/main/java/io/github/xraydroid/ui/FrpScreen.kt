@@ -222,15 +222,24 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                     state.message?.let { Text(it.resolve()) }
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                     if (state.phase == FrpPhase.RUNNING || state.phase == FrpPhase.STARTING) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             OutlinedButton(
                                 onClick = { saveThen(onRestart) },
-                                enabled = canSave
+                                enabled = canSave,
+                                modifier = Modifier.weight(1f)
                             ) { Text(stringResource(R.string.frp_restart)) }
-                            Button(onClick = onStop, enabled = !working) { Text(stringResource(R.string.frp_stop)) }
+                            Button(
+                                onClick = onStop,
+                                enabled = !working,
+                                modifier = Modifier.weight(1f)
+                            ) { Text(stringResource(R.string.frp_stop)) }
                         }
                     } else {
-                        Button(onClick = { saveThen(onStart) }, enabled = canSave) { Text(stringResource(R.string.frp_start)) }
+                        Button(
+                            onClick = { saveThen(onStart) },
+                            enabled = canSave,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(stringResource(R.string.frp_start)) }
                     }
                 }
             }
@@ -239,47 +248,59 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
             item { Text(stringResource(R.string.frp_proxies_title), style = MaterialTheme.typography.titleLarge) }
             items(state.proxies) { proxy ->
                 Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("${proxy.name} · ${proxy.type}", style = MaterialTheme.typography.titleMedium)
                         Text(stringResource(frpProxyStatusLabel(proxy.status)))
-                        if (proxy.remoteAddress.isNotBlank()) Text(proxy.remoteAddress)
+                        if (proxy.remoteAddress.isNotBlank()) {
+                            Text(
+                                proxy.remoteAddress,
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
         }
         item {
-            Text(stringResource(R.string.frp_config_mode_title), style = MaterialTheme.typography.titleLarge)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (formMode) {
-                    Button(onClick = {}, enabled = initialized && !busy, modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.frp_config_mode_form))
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(R.string.frp_config_mode_title), style = MaterialTheme.typography.titleLarge)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (formMode) {
+                        Button(onClick = {}, enabled = initialized && !busy, modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.frp_config_mode_form))
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = ::switchToForm,
+                            enabled = initialized && !busy,
+                            modifier = Modifier.weight(1f)
+                        ) { Text(stringResource(R.string.frp_config_mode_form)) }
                     }
-                } else {
-                    OutlinedButton(
-                        onClick = ::switchToForm,
-                        enabled = initialized && !busy,
-                        modifier = Modifier.weight(1f)
-                    ) { Text(stringResource(R.string.frp_config_mode_form)) }
-                }
-                if (formMode) {
-                    OutlinedButton(
-                        onClick = {
-                            exportDraft { text, _ ->
-                                draft = text
-                                formMode = false
-                                formState.clear()
-                            }
-                        },
-                        enabled = initialized && !busy && formValid,
-                        modifier = Modifier.weight(1f)
-                    ) { Text(stringResource(R.string.frp_config_mode_toml)) }
-                } else {
-                    Button(onClick = {}, enabled = initialized && !busy, modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.frp_config_mode_toml))
+                    if (formMode) {
+                        OutlinedButton(
+                            onClick = {
+                                exportDraft { text, _ ->
+                                    draft = text
+                                    formMode = false
+                                    formState.clear()
+                                }
+                            },
+                            enabled = initialized && !busy && formValid,
+                            modifier = Modifier.weight(1f)
+                        ) { Text(stringResource(R.string.frp_config_mode_toml)) }
+                    } else {
+                        Button(onClick = {}, enabled = initialized && !busy, modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.frp_config_mode_toml))
+                        }
                     }
                 }
+                Text(
+                    stringResource(R.string.frp_config_mode_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-            Text(stringResource(R.string.frp_config_mode_note), style = MaterialTheme.typography.bodySmall)
         }
         if (!initialized) {
             item(key = "frp/loading") { Text(stringResource(R.string.frp_config_loading)) }
@@ -297,57 +318,84 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
             }
         } else {
             item {
-                Text(stringResource(R.string.frp_config_toml_title), style = MaterialTheme.typography.titleLarge)
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = {
-                        draft = it
-                        feedback = ""
-                    },
-                    enabled = initialized && !busy,
-                    label = { Text(stringResource(R.string.frp_config_toml_label)) },
-                    minLines = 12,
-                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(stringResource(R.string.frp_config_toml_title), style = MaterialTheme.typography.titleLarge)
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = {
+                            draft = it
+                            feedback = ""
+                        },
+                        enabled = initialized && !busy,
+                        label = { Text(stringResource(R.string.frp_config_toml_label)) },
+                        minLines = 12,
+                        modifier = Modifier.fillMaxWidth(),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
+                    )
+                }
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            exportDraft { text, _ ->
+                                val valid = withContext(Dispatchers.IO) { FrpStore.validateConfig(context, text) }
+                                feedback = context.getString(
+                                    if (valid) R.string.frp_feedback_valid else R.string.frp_feedback_invalid
+                                )
+                            }
+                        },
+                        enabled = canSave,
+                        modifier = Modifier.weight(1f)
+                    ) { Text(stringResource(R.string.frp_validate)) }
+                    Button(
+                        onClick = { saveThen() },
+                        enabled = canSave,
+                        modifier = Modifier.weight(1f)
+                    ) { Text(stringResource(R.string.frp_save)) }
+                }
+                if (feedback.isNotBlank()) Text(feedback)
+                if (!formValid) {
+                    Text(stringResource(R.string.frp_form_invalid_block), color = MaterialTheme.colorScheme.error)
+                }
+                if (dirty) Text(stringResource(R.string.frp_draft_unsaved), style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = { importConfig.launch(arrayOf("*/*")) },
+                        enabled = !busy && initialized,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(stringResource(R.string.frp_import_toml))
+                    }
+                    OutlinedButton(
+                        onClick = { importSupport.launch(arrayOf("*/*")) },
+                        enabled = !busy && initialized,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(stringResource(R.string.frp_import_support))
+                    }
+                }
+                Text(
+                    stringResource(R.string.frp_import_support_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        exportDraft { text, _ ->
-                            val valid = withContext(Dispatchers.IO) { FrpStore.validateConfig(context, text) }
-                            feedback = context.getString(
-                                if (valid) R.string.frp_feedback_valid else R.string.frp_feedback_invalid
-                            )
-                        }
-                    },
-                    enabled = canSave
-                ) { Text(stringResource(R.string.frp_validate)) }
-                Button(onClick = { saveThen() }, enabled = canSave) { Text(stringResource(R.string.frp_save)) }
-            }
-            if (feedback.isNotBlank()) Text(feedback, modifier = Modifier.padding(top = 12.dp))
-            if (!formValid) {
-                Text(stringResource(R.string.frp_form_invalid_block), color = MaterialTheme.colorScheme.error)
-            }
-            if (dirty) Text(stringResource(R.string.frp_draft_unsaved), style = MaterialTheme.typography.labelMedium)
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = { importConfig.launch(arrayOf("*/*")) }, enabled = !busy && initialized) {
-                    Text(stringResource(R.string.frp_import_toml))
-                }
-                OutlinedButton(onClick = { importSupport.launch(arrayOf("*/*")) }, enabled = !busy && initialized) {
-                    Text(stringResource(R.string.frp_import_support))
-                }
-            }
-            Text(stringResource(R.string.frp_import_support_note), style = MaterialTheme.typography.bodySmall)
-        }
-        item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
                             stringResource(R.string.frp_unsafe_toggle),
                             modifier = Modifier.weight(1f),
@@ -370,7 +418,8 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                     }
                     Text(
                         stringResource(R.string.frp_unsafe_note),
-                        style = MaterialTheme.typography.bodySmall
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

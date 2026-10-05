@@ -132,7 +132,11 @@ fun ServerDashboard(
                                 shape = RoundedCornerShape(20.dp)
                             ) { Text(stringResource(R.string.dashboard_panel_open)) }
                             if (!running) {
-                                Text(stringResource(R.string.dashboard_panel_requires_service), style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    stringResource(R.string.dashboard_panel_requires_service),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
@@ -150,32 +154,34 @@ fun ServerDashboard(
                     }
                 }
                 item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(stringResource(R.string.dashboard_logs_title), style = MaterialTheme.typography.titleLarge)
-                        TextButton(onClick = { logsExpanded = !logsExpanded }) {
-                            Text(
-                                stringResource(
-                                    if (logsExpanded) R.string.dashboard_logs_collapse else R.string.dashboard_logs_expand
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(stringResource(R.string.dashboard_logs_title), style = MaterialTheme.typography.titleLarge)
+                            TextButton(onClick = { logsExpanded = !logsExpanded }) {
+                                Text(
+                                    stringResource(
+                                        if (logsExpanded) R.string.dashboard_logs_collapse else R.string.dashboard_logs_expand
+                                    )
                                 )
+                            }
+                        }
+                        if (!logsExpanded) {
+                            Text(
+                                stringResource(R.string.dashboard_logs_hint),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else if (state.logs.isEmpty()) {
+                            Text(
+                                stringResource(R.string.dashboard_logs_empty),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                    }
-                    if (!logsExpanded) {
-                        Text(
-                            stringResource(R.string.dashboard_logs_hint),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else if (state.logs.isEmpty()) {
-                        Text(
-                            stringResource(R.string.dashboard_logs_empty),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
                 if (logsExpanded) {
