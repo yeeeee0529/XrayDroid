@@ -1,6 +1,29 @@
 # 進度與驗證紀錄
 
-日期：2026-10-04。
+日期：2026-10-05。
+
+## 指定 wlan0 綁定失敗的根因確認與排除（2026-10-05）
+
+- 使用者回報：修改 Wi-Fi 網卡 MAC 後，出站網路頁的 wlan0 顯示「目前無法綁定這個網路；可重新偵測後重試。」，核心停在「等待指定網路」。此前數輪把此現象記為未解，並把熱點與 MAC 列為環境條件。
+- 現場狀態：wlan0 為 network 102（10.12.31.222/16、SSID YMHS109、MAC `b4:a9:fc:52:5b:6c`、VALIDATED、當下為系統預設網路），App UID 為 10389。裝置同時有 Wi-Fi P2P 熱點（`p2p-wlan0-0`／network 105／192.168.49.1/24）與 full-tunnel WireGuard VPN（`tun0`／network 104、`bypassable=false`、Uids 0-99999、UnderlyingNetworks=[102]）。
+- 判定過程：畫面顯示的是 `reportBindingFailure` 的字串，代表原生綁定探針失敗，而非看不到介面（位址與 DNS 已由 `LinkProperties` 取得）。以 App 的 UID 直接重跑同一支探針（`run-as` + `XRAY_ANDROID_NETWORK_HANDLE` + `libxray.so version`）：netId 102（wlan0）與 105（熱點）皆回 `cannot bind Android network: operation not permitted`（exit 78），只有 netId 104（VPN）成功；相同 netId 以 shell UID 2000 執行則成功。`dumpsys connectivity` 的 Permission Monitor 顯示 `Interface: tun0`、`UIDs: [0-10352, 10354-99999]`，涵蓋 10389。`INTERNET` 與 `ACCESS_LOCAL_NETWORK` 均已授予，排除 manifest 權限問題。
+- 結論：被 full-tunnel VPN 涵蓋的 App UID 不能綁定 VPN 以外的網路（Android 的防洩漏行為）。MAC 與熱點都不是原因；`NetworkStore` 的 netId 綁定設計在此環境下必然得到 `EPERM`，屬平台限制而非程式缺陷。
+- 解法（未變更程式碼）：在 WireGuard 把 `io.github.xraydroid` 加入排除清單（編輯通道 → 介面卡片最下方「套用到所有應用程式」按鈕 → 清單對話框的「排除」分頁）。MAC、熱點與 VPN 本身皆維持原狀，套用時 tunnel 會重啟數秒。
+- 更正對象：本檔「frp 實際連線狀態（2026-10-02）」、「Android 預測返回手勢整合（2026-10-02）」、「返回動畫接手修正（2026-10-02）」與「frpc 表單／TOML 雙模式配置」中列為懸案或歸因於熱點／MAC 的綁定失敗；「使用者可見文字抽出至資源（2026-10-02）」已指出 VPN 為原因，本次補上根因確認、解法與實測。
+
+### 已完成的驗證
+
+- 排除後 Permission Monitor 的 tun0 UID 範圍為 `[0-10352, 10354-10388, 10390-20388, 20390-99999]`，不再包含 10389。
+- 同一支探針以 App UID 重跑：netId 102 → exit 0（原為 exit 78）。反向確認：VPN 重啟後的新 netId 107 → exit 78，即排除後 App 綁不上 VPN，符合預期。
+- 實機 Pixel 9 Pro XL／Android 17：首頁顯示「服務運作中」與「出站網路：Wi-Fi · wlan0」，`libxui.so`、`libxray.so`、`libfrpc.so` 三個程序皆以 u0_a389 執行。
+- 熱點未受影響：`p2p-wlan0-0` 仍為 192.168.49.1/24，鄰居表 6 筆用戶端（多數 REACHABLE）；套用設定時 WireGuard 重啟，netId 由 104 變 107。
+- wlan0 的 MAC 仍為 `b4:a9:fc:52:5b:6c`，未被重設。
+
+### 未驗證與限制
+
+- 熱點用戶端到網際網路的端到端連線未由用戶端裝置實測，只確認介面狀態與 L2 鄰居。
+- `bypassable=false` 的來源（WireGuard 端設定或系統端）未進一步確認；其他 OEM、其他 VPN 實作（always-on VPN、lockdown）是否同樣只要排除 App 即可，未逐一驗證。
+- 本輪未變更程式碼，因此未執行 Gradle 檢查；受影響檔案僅本紀錄。
 
 ## Launcher 圖示更換（2026-10-04）
 
