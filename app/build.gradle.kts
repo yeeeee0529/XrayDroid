@@ -38,6 +38,12 @@ android {
         }
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
+    buildTypes {
+        release {
+            // 個人裝置使用的非 debuggable 版本；沿用 debug key 簽署，正式散布簽署另案處理。
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
     lint {
         warningsAsErrors = true
         // 固定已驗證的工具與套件版本，第一版限定 arm64 Android 裝置。

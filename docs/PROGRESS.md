@@ -2,6 +2,19 @@
 
 日期：2026-10-05。
 
+## release build 類型（2026-10-05）
+
+- 使用者回報 frp 頁面操作卡頓。排查結論：主要因素為日常使用的是 debug APK（debuggable 版本 Compose 重組明顯較慢，frp 表單欄位多、每次輸入重建文件並重組可見欄位，debug 下被放大）；狀態輪詢為 2 秒一次且 StateFlow 以相等性合併，閒置時不觸發重組，影響小。
+- `app/build.gradle.kts` 新增 `release` build 類型：沿用 debug key 簽署（可覆蓋安裝現有版本），未啟用混淆；正式散布簽署仍屬未決事項。
+
+### 已完成的驗證
+
+- `./gradlew :app:assembleRelease` 通過，產出 `app-release.apk`（56 MB，debug key 簽署）。
+
+### 未驗證
+
+- release APK 在裝置上的實際流暢度尚未確認；若仍卡頓，下一步為真機 profiling 後再針對表單輸入路徑最佳化。
+
 ## 介面間距與排版可讀性調整（2026-10-05）
 
 - 不改動 Material 3 Expressive 設計與任何字串內容，僅調整版面間距與文字層次。
