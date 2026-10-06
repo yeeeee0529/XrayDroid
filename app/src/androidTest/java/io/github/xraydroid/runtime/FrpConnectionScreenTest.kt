@@ -5,7 +5,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.xraydroid.R
 import io.github.xraydroid.ui.FrpScreen
 import org.junit.Rule
 import org.junit.Test
@@ -15,7 +17,8 @@ class FrpConnectionScreenTest {
 
     @Test
     fun topCardShowsLoginFailureRecoveryAndLostStatusWithoutProxies() {
-        check(InstrumentationRegistry.getInstrumentation().targetContext.packageName.endsWith(".validation")) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        check(context.packageName.endsWith(".validation")) {
             "FRP UI verification requires an isolated validation application ID"
         }
         val state = mutableStateOf(
@@ -27,15 +30,17 @@ class FrpConnectionScreenTest {
             )
         )
         compose.setContent { MaterialTheme { FrpScreen(state.value, {}, {}, {}, {}) } }
-        compose.onNodeWithText("連線失敗，重試中").assertIsDisplayed()
-        compose.onNodeWithText("frps 拒絕登入", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("已嘗試連線 2 次").assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.frp_connection_retrying)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.frp_connection_error_login_rejected)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(
+            context.resources.getQuantityString(R.plurals.frp_connection_attempts, 2, 2)
+        ).performScrollTo().assertIsDisplayed()
         compose.runOnIdle { state.value = state.value.copy(connection = FrpConnectionStatus(FrpConnectionPhase.CONNECTED)) }
-        compose.onNodeWithText("已連線至 frps").assertIsDisplayed()
-        compose.onNodeWithText("目前沒有代理狀態", substring = true).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.frp_connection_connected)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.frp_proxies_empty)).performScrollTo().assertIsDisplayed()
         compose.runOnIdle { state.value = state.value.copy(connection = FrpConnectionStatus(FrpConnectionPhase.RECONNECTING)) }
-        compose.onNodeWithText("已斷線，重新連線中").assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.frp_connection_reconnecting)).performScrollTo().assertIsDisplayed()
         compose.runOnIdle { state.value = state.value.copy(connection = FrpConnectionStatus()) }
-        compose.onNodeWithText("連線狀態無法取得").assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.frp_connection_unknown)).performScrollTo().assertIsDisplayed()
     }
 }

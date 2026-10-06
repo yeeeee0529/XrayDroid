@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-enum class FrpPhase { STOPPED, VALIDATING, STARTING, RUNNING, STOPPING, ERROR }
+enum class FrpPhase { STOPPED, VALIDATING, STARTING, RUNNING, WAITING_FOR_NETWORK, STOPPING, ERROR }
 
 data class FrpProxyStatus(val name: String, val type: String, val status: String, val remoteAddress: String)
 
@@ -30,7 +30,8 @@ data class FrpState(
     val revision: Long = 0,
     val allowUnsafeTokenCommand: Boolean = false,
     val connection: FrpConnectionStatus = FrpConnectionStatus(),
-    val proxies: List<FrpProxyStatus> = emptyList()
+    val proxies: List<FrpProxyStatus> = emptyList(),
+    val outboundNetworkLabel: TextResource? = null
 )
 
 object FrpStore {
@@ -75,7 +76,7 @@ object FrpStore {
     }
 
     fun setAllowUnsafeTokenCommand(context: Context, enabled: Boolean) {
-        if (state.value.phase in setOf(FrpPhase.RUNNING, FrpPhase.STARTING, FrpPhase.STOPPING)) return
+        if (state.value.phase in setOf(FrpPhase.RUNNING, FrpPhase.STARTING, FrpPhase.WAITING_FOR_NETWORK, FrpPhase.STOPPING)) return
         context.getSharedPreferences("frp", Context.MODE_PRIVATE).edit { putBoolean("allow_token_command", enabled) }
         mutableState.update { it.copy(allowUnsafeTokenCommand = enabled) }
     }
@@ -172,8 +173,16 @@ object FrpStore {
         }
     }
 
-    internal fun transition(phase: FrpPhase, message: TextResource?) {
-        mutableState.update { it.copy(phase = phase, message = message, connection = FrpConnectionStatus(), proxies = emptyList()) }
+    internal fun transition(phase: FrpPhase, message: TextResource?, outboundNetworkLabel: TextResource? = null) {
+        mutableState.update {
+            it.copy(
+                phase = phase,
+                message = message,
+                connection = FrpConnectionStatus(),
+                proxies = emptyList(),
+                outboundNetworkLabel = outboundNetworkLabel
+            )
+        }
     }
 
     internal fun updateRuntime(status: FrpRuntimeStatus?) {

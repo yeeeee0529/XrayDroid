@@ -1,6 +1,31 @@
 # 進度與驗證紀錄
 
-日期：2026-10-05。
+日期：2026-10-06。
+
+## frp 獨立網路介面選擇（2026-10-06）
+
+- frp 頁新增與 Xray 共用的網路介面選擇 UI 與偵測邏輯；`FrpNetworkStore` 使用獨立 `frp_network` 偏好設定，預設跟隨系統。只保存模式與介面名稱，不保存 Android Network handle；綁定失敗與行動網路請求亦各自獨立。
+- `FrpService` 觀察自己的模式、介面名稱與當前 handle；切換時重新啟動 frpc，指定介面消失或不可綁定時清理程序並等待恢復，不回退其他網路。等待期間可停止，停止後的網路事件不會重新啟動服務；等待期間停用外部權杖指令設定。
+- frpc 原生修補透過 `XRAYDROID_FRP_NETWORK_HANDLE` 套用指定 Android 網路；啟動前以 `--version` 進行實際綁定預檢。Xray 網路選擇與使用者 TOML／資料庫不受影響。
+- 修正停止完成後的重複程序清理：`onDestroy` 在沒有仍由服務持有的 runtime 時不再掃除相同執行檔，避免誤殺之後啟動的設定驗證／版本探針；新增實際啟停後連續版本查詢的回歸測試。
+- 英文、繁中、簡中 README 補上簡短說明；首頁、CHANGELOG 與 agent guide 同步更新。新增三語系字串與獨立設定／綁定失敗／等待恢復／停止競態／TCP、UDP 回送裝置測試。
+
+### 實際驗證結果
+
+- Google 官方 Platform-Tools 37.0.1 已下載至忽略的 `.tools/android-sdk/platform-tools`，`adb version` 實際通過；另將 adb 連結至既有 `~/.local/bin`。手機首次 USB 授權後，`adb devices -l` 確認 Pixel 9 Pro XL／Android 17／arm64 為 device。
+- 字串 XML 名稱與順序交叉比對通過：三語系各 330 筆。`git diff --check` 通過。
+- 本機原先缺少 Java、Android SDK／NDK、Node.js 與符合要求的 Python。已在忽略的 `.tools` 補齊 JDK 17、SDK 36／Build Tools 36.0.0／NDK r30、Node.js 24 與 uv 管理的 Python 3.13；可用 `source .tools/env.sh` 載入，不修改系統 Python 或 shell 設定。
+- `./scripts/build-core.sh` 最終通過：固定來源修補、官方 Xray 資產 SHA-256 校驗、上游前端 build 與三個 Android arm64 原生核心編譯；frpc LOAD 段均為 16 KB 對齊。首次因系統 Python 3.9 缺少 `hashlib.file_digest` 中斷，補齊符合要求的 Python 後重跑成功。
+- Go 相關測試、vet、gofmt、修補正向／反向套用與重現性檢查通過。完整 `go test -mod=readonly ./...` 的一般套件皆通過；兩個 e2e 套件因預設路徑缺少執行檔而初始化失敗。產出 host frpc／frps 後，一般 e2e 以官方 Ginkgo 並行方式重跑：256 項中 254 通過、2 略過、0 失敗。單程序執行曾由本輪 agent 中止以改用並行執行，不計為通過。歷史相容性測試補上 current 執行檔路徑後，仍因 `baseline-frps-path` 未提供而中止；未使用目前版本冒充舊版基準。
+- `:app:ktlintFormat`／`:app:ktlintCheck`、Kotlin 主程式與裝置測試編譯、`:app:testDebugUnitTest`／`:app:assembleDebug` 已通過；JVM XML 確認 25 項、0 failures／errors／skipped。Android lint 獨立執行成功：0 errors／warnings，保留既有 2 個 hints。
+- 首輪隔離 frp 裝置測試 11 項：7 通過、4 失敗。4 項皆為指定 Wi-Fi 原生綁定預檢失敗；WireGuard 當時為 `bypassable=false`，UID 範圍只排除正式 App，validation 套件仍被涵蓋。使用者選擇暫時關閉 WireGuard，並已由系統網路狀態確認 VPN 解除；解除 VPN 後的第二輪仍有 2 項失敗：測試在已停止狀態重複派送停止指令，使設定驗證或探針遭中止。已修正測試清理與停止完成後的重複 runtime 清理，新增回歸案例；第三輪相關裝置測試最終 12 項全部通過，包含新增的停止後探針存活案例。
+
+- 首輪完整裝置 suite：40 項，35 通過、4 失敗、1 行動網路略過。失敗為 frp 訊息測試仍比對舊文案、原始測試設定還原、UDP 固定公共 DNS 逾時、設定導覽仍期待舊標題與 frp 不含網路控制。已修正測試的多語系資源比對、捲動、清理與新介面斷言；UDP 探針改用所選 Android 網路 `LinkProperties` 提供的 IPv4 DNS，保留實際 TCP 對外位址比較與 UDP 回覆驗證，沒有將失敗改成略過。
+- 相關混合裝置 suite 22 項：20 通過、1 舊文案比對失敗、1 行動網路略過；其餘包含真實 TCP 出站位址比較、所選網路 DNS 的 UDP 回覆、frp 設定還原與 UI 網路選擇獨立性均通過。最後一項訊息測試改讀字串資源後，單獨重跑通過。
+- 第二輪完整 suite：40 項，38 通過、1 導覽捲動失敗、1 行動網路略過。導覽測試改用可見清單 bounds 產生實際觸控滑動後，單獨重跑通過，保留 frp／Xray 選擇獨立性、設定編輯區與返回的斷言。
+- 使用者明確要求停止繼續測試並直接 commit／push；不再執行完整 suite，不宣稱最後完整 suite 全數通過。此前各項失敗修正後的相關測試均已有實際通過結果。測試 fixture 與本輪 adb reverse 17000／18080 已清理，喚醒設定還原為原值 0；WireGuard 由使用者自行開回。
+- 未再產生正式 application ID 的 APK 或安裝至正式套件；目前工作包含已驗證的隔離 APK 與程式／文件修改。新功能的其他 Android／OEM、行動網路及非回送 frps 的指定介面傳輸仍未逐項驗證；外部權杖指令另外執行的程序不保證繼承 frpc 的網路綁定。
+- 已比對手機正式 APK 與本機新 APK 的公開簽章：不同。未解除安裝或覆蓋正式套件；若要保留原資料更新，需原簽署金鑰。沒有讀取私有設定或私鑰。
 
 ## release build 類型（2026-10-05）
 

@@ -2,6 +2,10 @@
 
 ## 尚未發布
 
+- 修正 frpc 停止完成後的重複清理，避免中止之後啟動的設定驗證與版本探針。
+
+- frp 新增獨立網路介面選擇與重新偵測；設定持久保存，切換時重新啟動 frpc，指定網路失效時等待恢復且不回退其他網路。frpc 與 DNS 綁定所選 Android 網路，不影響 Xray 的網路選擇。
+
 - 更換 launcher 圖示：Android 機器人圓頂頭剪影搭配交叉成 X 的天線，頭部作為伺服器面板（綠色與琥珀色 LED、機架橫向插槽線）；採 adaptive icon 並提供 themed icon 單色剪影，另附 Play Console 用 512×512 PNG。
 
 - 使用者可見文字集中至 `res/values/strings.xml`（預設繁體中文）；runtime 狀態改以資源 ID 加格式參數傳遞，UI 與通知在顯示前解析，日後可直接新增其他語系。

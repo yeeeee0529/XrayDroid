@@ -2,7 +2,9 @@ package io.github.xraydroid.runtime
 
 import io.github.xraydroid.R
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NetworkSelectionTest {
@@ -57,6 +59,23 @@ class NetworkSelectionTest {
         val usable = option("eth1", OutboundNetworkMode.ETHERNET)
         assertEquals(usable, resolveInterfaceSelection(OutboundNetworkMode.ETHERNET, null, listOf(down, usable)))
         assertNull(resolveInterfaceSelection(OutboundNetworkMode.CELLULAR, null, listOf(usable)))
+    }
+
+    @Test
+    fun followingSystemRequiresSystemModeWithoutAnExplicitInterface() {
+        assertTrue(NetworkState().followsSystem())
+        assertFalse(NetworkState(selectedInterfaceName = "missing0").followsSystem())
+        assertFalse(NetworkState(selectedMode = OutboundNetworkMode.WIFI).followsSystem())
+    }
+
+    @Test
+    fun appliedLabelDistinguishesSystemRoutingFromSelectedInterface() {
+        val vpn = NetworkOption(OutboundNetworkMode.VPN, "tun0", emptyList(), emptyList(), 123L, true, true)
+        assertEquals(TextResource(R.string.network_label_system), NetworkState(selectedOption = vpn).networkLabel())
+        assertEquals(
+            TextResource(R.string.network_label_vpn, listOf("tun0")),
+            NetworkState(selectedMode = OutboundNetworkMode.VPN, selectedInterfaceName = "tun0", selectedOption = vpn).networkLabel()
+        )
     }
 
     private fun option(name: String, mode: OutboundNetworkMode, default: Boolean = false, validated: Boolean = true) = InterfaceOption(

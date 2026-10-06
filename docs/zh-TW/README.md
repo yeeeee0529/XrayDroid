@@ -58,7 +58,7 @@ VPN 獨立顯示，不併入系統預設。沒有可用 Android 網路、已關�
 
 ## frp 用戶端
 
-「設定」→「frp」提供完整 frp 用戶端，連線至外部 frp 服務端；手機不提供 frp 伺服器。此子頁與出站網路分開，frpc 使用獨立的 Foreground Service 與通知，啟停不影響 3x-ui／Xray。frpc 沿用 Android 系統路由，包括系統 VPN；Xray 的指定出站介面不套用至 frpc。
+「設定」→「frp」提供完整 frp 用戶端，連線至外部 frp 服務端；手機不提供 frp 伺服器。此子頁與出站網路分開，frpc 使用獨立的 Foreground Service 與通知，啟停不影響 3x-ui／Xray。frpc 可在此頁選擇網路介面，設定與 Xray 分別儲存；預設跟隨 Android 系統路由，指定介面時將 frpc 與 DNS 綁定至該 Android 網路。切換會重新啟動 frpc；指定網路不可用時等待恢復，不回退其他網路。
 
 1. 可選「表單配置」或「TOML 配置」。表單依基本設定、驗證、傳輸、TLS 與其他設定分組，展開需要的區塊即可編輯；支援 Token／OIDC、全部 TCP／KCP／QUIC／WebSocket／WSS 傳輸協定與中繼資料。
 

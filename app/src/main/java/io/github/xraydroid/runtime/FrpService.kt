@@ -28,6 +28,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -40,6 +42,8 @@ class FrpService : Service() {
     private val processLock = Any()
     private val generation = AtomicLong()
     private lateinit var layout: FrpLayout
+
+    @Volatile private var activeStartId = 0
 
     @Volatile private var process: java.lang.Process? = null
 
@@ -54,9 +58,30 @@ class FrpService : Service() {
         super.onCreate()
         layout = FrpLayout(this)
         FrpStore.initialize(applicationContext)
+        FrpNetworkStore.initialize(applicationContext)
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL, getString(R.string.frp_notification_channel), NotificationManager.IMPORTANCE_LOW)
         )
+        scope.launch {
+            FrpNetworkStore.state.map { state ->
+                Triple(
+                    state.selectedMode,
+                    state.selectedInterfaceName,
+                    if (state.followsSystem()) 0L else state.selectedOption?.handle
+                )
+            }.distinctUntilChanged().collect {
+                val ticket = synchronized(processLock) {
+                    if (!desiredRunning) return@collect
+                    generation.incrementAndGet()
+                }
+                scope.launch {
+                    mutex.withLock {
+                        if (generation.get() != ticket || !desiredRunning) return@withLock
+                        performAction(ticket, activeStartId, restart = true)
+                    }
+                }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -64,6 +89,7 @@ class FrpService : Service() {
         val action = intent?.action ?: ACTION_START
         val ticket = synchronized(processLock) {
             desiredRunning = action != ACTION_STOP
+            activeStartId = startId
             generation.incrementAndGet()
         }
         if (Build.VERSION.SDK_INT >= 34) {
@@ -78,27 +104,43 @@ class FrpService : Service() {
         scope.launch {
             mutex.withLock {
                 if (generation.get() != ticket) return@withLock
-                try {
-                    if (!desiredRunning) {
-                        stopClient()
-                        finish(ticket, startId)
-                    } else {
-                        if (action == ACTION_RESTART) stopClient()
-                        startClient(ticket, startId)
-                    }
-                } catch (_: CancellationException) {
-                    stopClient()
-                } catch (_: Exception) {
-                    stopClient()
-                    if (generation.get() == ticket) {
-                        desiredRunning = false
-                        FrpStore.transition(FrpPhase.ERROR, TextResource(R.string.frp_message_start_failed))
-                        finish(ticket, startId)
-                    }
-                }
+                performAction(ticket, startId, restart = action == ACTION_RESTART)
             }
         }
         return START_STICKY
+    }
+
+    private suspend fun performAction(ticket: Long, startId: Int, restart: Boolean) {
+        try {
+            if (!desiredRunning) {
+                stopClient()
+            } else {
+                if (restart) stopClient()
+                startClient(ticket, startId)
+            }
+        } catch (_: CancellationException) {
+            stopClient()
+        } catch (_: Exception) {
+            stopClient()
+            synchronized(processLock) {
+                if (generation.get() != ticket) return@synchronized
+                val latest = FrpNetworkStore.state.value
+                if (desiredRunning && !latest.followsSystem() && latest.selectedOption == null) {
+                    waitForNetwork()
+                } else {
+                    desiredRunning = false
+                    FrpStore.transition(FrpPhase.ERROR, TextResource(R.string.frp_message_start_failed))
+                }
+            }
+        }
+        if (generation.get() == ticket && process == null && FrpStore.state.value.phase != FrpPhase.WAITING_FOR_NETWORK) {
+            finish(ticket, startId)
+        }
+    }
+
+    private fun waitForNetwork() {
+        FrpStore.transition(FrpPhase.WAITING_FOR_NETWORK, TextResource(R.string.frp_message_network_unavailable))
+        updateNotification(getString(R.string.frp_phase_waiting_network))
     }
 
     private suspend fun startClient(ticket: Long, startId: Int) {
@@ -109,8 +151,27 @@ class FrpService : Service() {
             updateNotification(getString(FrpStore.state.value.connection.phase.titleRes))
             return
         }
+        val networkState = FrpNetworkStore.state.value
+        val option = networkState.selectedOption
+        if (!networkState.followsSystem() && option == null) {
+            stopClient()
+            if (generation.get() != ticket || !desiredRunning) throw CancellationException()
+            waitForNetwork()
+            return
+        }
+        val networkHandle = if (networkState.followsSystem()) 0L else checkNotNull(option).handle
         FrpStore.transition(FrpPhase.STARTING, TextResource(R.string.frp_message_starting))
         layout.prepare()
+        if (!networkState.followsSystem()) {
+            try {
+                probeNetworkBinding(networkHandle)
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) {
+                    FrpNetworkStore.reportBindingFailure(checkNotNull(option).interfaceName, networkHandle)
+                }
+                throw error
+            }
+        }
         val staleGroup = OwnedProcesses.groupFor(layout.executable.absolutePath)
         OwnedProcesses.terminateGroup(staleGroup)
         OwnedProcesses.terminate(paths)
@@ -127,6 +188,7 @@ class FrpService : Service() {
             layout.builder(*arguments.toTypedArray()).apply {
                 environment().putAll(
                     mapOf(
+                        "XRAYDROID_FRP_NETWORK_HANDLE" to networkHandle.toString(),
                         "XRAYDROID_FRP_ADMIN_PORT" to port.toString(),
                         "XRAYDROID_FRP_ADMIN_USER" to "xraydroid",
                         "XRAYDROID_FRP_ADMIN_PASSWORD" to password
@@ -144,9 +206,10 @@ class FrpService : Service() {
             check(child.isAlive) { "FRP client exited before readiness" }
             val statuses = pollStatus(port, authorization)
             if (statuses != null) {
+                if (generation.get() != ticket || !desiredRunning) throw CancellationException()
                 processGroup = OwnedProcesses.groupFor(layout.executable.absolutePath)
                 check(processGroup != null) { "FRP process session is unavailable" }
-                FrpStore.transition(FrpPhase.RUNNING, null)
+                FrpStore.transition(FrpPhase.RUNNING, null, networkState.networkLabel())
                 FrpStore.updateRuntime(statuses)
                 updateNotification(getString(FrpStore.state.value.connection.phase.titleRes))
                 monitor(child, ticket, startId)
@@ -156,6 +219,18 @@ class FrpService : Service() {
             delay(200)
         }
         error("FRP control endpoint readiness timed out")
+    }
+
+    private fun probeNetworkBinding(networkHandle: Long) {
+        val probe = layout.builder("--version").apply {
+            environment()["XRAYDROID_FRP_NETWORK_HANDLE"] = networkHandle.toString()
+        }.start()
+        try {
+            check(probe.waitFor(5, TimeUnit.SECONDS)) { "Native FRP network binding probe timed out" }
+            check(probe.exitValue() == 0) { "Native FRP network binding probe failed" }
+        } finally {
+            if (probe.isAlive) probe.destroyForcibly()
+        }
     }
 
     private fun monitorStatus(child: java.lang.Process, ticket: Long) {
@@ -291,17 +366,22 @@ class FrpService : Service() {
     }
 
     override fun onDestroy() {
-        synchronized(processLock) {
-            OwnedProcesses.terminateGroup(processGroup ?: OwnedProcesses.groupFor(layout.executable.absolutePath), OsConstants.SIGKILL)
+        val requiresCleanup = synchronized(processLock) {
+            val ownedRuntime = desiredRunning || process != null || processGroup != null
+            // 停止已清理完成時，不再掃除稍後啟動的設定驗證或版本探針。
+            if (ownedRuntime) {
+                OwnedProcesses.terminateGroup(processGroup ?: OwnedProcesses.groupFor(layout.executable.absolutePath), OsConstants.SIGKILL)
+            }
             processGroup = null
             desiredRunning = false
             generation.incrementAndGet()
+            ownedRuntime
         }
         scope.cancel()
         synchronized(processLock) {
             process?.destroyForcibly()
             process = null
-            OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
+            if (requiresCleanup) OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
         }
         if (FrpStore.state.value.phase != FrpPhase.ERROR) FrpStore.transition(FrpPhase.STOPPED, TextResource(R.string.frp_message_stopped))
         super.onDestroy()

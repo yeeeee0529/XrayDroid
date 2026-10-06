@@ -20,7 +20,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 Open XrayDroid → "Start service" → "Open admin panel"; the panel is fixed at `http://127.0.0.1:2053/`, and the first sign-in uses `admin` / `admin`, which is best changed immediately.
 
-Inbounds should use a port above 1024; the service can be stopped from the app or the notification. The Settings page also has separate "Outbound network" and "frp" subpages; see the full documentation for detailed behavior.
+Inbounds should use a port above 1024; the service can be stopped from the app or the notification. The Settings page also has separate "Outbound network" and "frp" subpages; frpc can select its own network interface independently of Xray. See the full documentation for detailed behavior.
 
 ## Current implementation status
 

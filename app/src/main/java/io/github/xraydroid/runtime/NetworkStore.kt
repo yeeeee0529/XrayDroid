@@ -52,7 +52,7 @@ data class NetworkState(
     val interfaces: List<InterfaceOption> = emptyList()
 )
 
-object NetworkStore {
+open class NetworkSelectionStore(private val preferencesName: String) {
     private data class KernelInterface(
         val name: String,
         val addresses: List<String>,
@@ -137,7 +137,7 @@ object NetworkStore {
         if (initialized) return
         initialized = true
         connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
-        preferences = context.applicationContext.getSharedPreferences("outbound_network", Context.MODE_PRIVATE)
+        preferences = context.applicationContext.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
         selectedMode = runCatching {
             OutboundNetworkMode.valueOf(preferences.getString("mode", "SYSTEM") ?: "SYSTEM")
         }.getOrDefault(OutboundNetworkMode.SYSTEM)
@@ -454,3 +454,7 @@ object NetworkStore {
         isDefault
     )
 }
+
+object NetworkStore : NetworkSelectionStore("outbound_network")
+
+object FrpNetworkStore : NetworkSelectionStore("frp_network")

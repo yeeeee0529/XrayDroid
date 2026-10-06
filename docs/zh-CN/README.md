@@ -53,7 +53,7 @@ VPN 独立显示，不并入系统默认。没有可用 Android 网络、已关�
 
 ## frp 客户端
 
-“设置”→“frp”提供完整的 frp 客户端，连接外部 frp 服务端；手机不提供 frp 服务端。此子页面与出站网络分开，frpc 使用独立的前台服务与通知，启停不影响 3x-ui／Xray。frpc 沿用 Android 系统路由，包括系统 VPN；Xray 的指定出站接口不适用于 frpc。
+“设置”→“frp”提供完整的 frp 客户端，连接外部 frp 服务端；手机不提供 frp 服务端。此子页面与出站网络分开，frpc 使用独立的前台服务与通知，启停不影响 3x-ui／Xray。frpc 可在此页面选择网络接口，设置与 Xray 分别保存；默认跟随 Android 系统路由，指定接口时将 frpc 与 DNS 绑定到该 Android 网络。切换会重启 frpc；指定网络不可用时等待恢复，不回退其他网络。
 
 1. 可选“表单配置”或“TOML 配置”。表单按基本设置、认证、传输、TLS 与其他设置分组，展开需要的区块即可编辑；支持 Token／OIDC、全部 TCP／KCP／QUIC／WebSocket／WSS 传输协议与元数据。
 2. “转发规则”可添加、编辑与删除 TCP、UDP、HTTP、HTTPS、STCP、SUDP、XTCP、TCPMUX 代理；“访客规则”支持 STCP、SUDP、XTCP。各协议显示对应的域名、路径、密钥、监听、穿透及备用等字段。规则协议在创建时选择，要改协议请再添加一条规则。

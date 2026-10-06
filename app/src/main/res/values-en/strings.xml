@@ -123,6 +123,10 @@
     <!-- frp client -->
     <string name="frp_title">frp</string>
     <string name="frp_client_title">frp client</string>
+    <string name="frp_network_title">frp network</string>
+    <string name="frp_network_description">Select the network interface for frpc independently of Xray. Switching restarts frpc and drops existing connections; an unavailable selected network waits for recovery.</string>
+    <string name="frp_phase_waiting_network">Waiting for selected network</string>
+    <string name="frp_message_network_unavailable">The selected network is unavailable. frpc will restart when it returns.</string>
     <string name="frp_phase_stopped">Stopped</string>
     <string name="frp_phase_validating">Validating configuration</string>
     <string name="frp_phase_starting">Starting</string>

@@ -12,6 +12,7 @@ import java.io.File
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.HttpURLConnection
+import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -80,12 +81,14 @@ class NetworkBindingTest {
         }
         assumeTrue("Requested transport is unavailable on this development device", network != null)
         val selected = requireNotNull(network)
+        val dnsServer = connectivity.getLinkProperties(selected)?.dnsServers?.filterIsInstance<Inet4Address>()?.firstOrNull()
+        assumeTrue("The selected network must expose an IPv4 DNS server for the UDP probe", dnsServer != null)
         val expected = observedAddress(selected)
         withCore(selected.networkHandle) { port ->
             val actual = observedAddressThroughCore(port)
             // 不將裝置對外 IP 寫進測試輸出。
             assertTrue("Core TCP egress must match the explicitly selected Android network", expected == actual)
-            verifyUdpDns(port)
+            verifyUdpDns(port, requireNotNull(dnsServer))
         }
     }
 
@@ -121,7 +124,7 @@ class NetworkBindingTest {
         "IP verification endpoint returned an unexpected response"
     }
 
-    private fun verifyUdpDns(port: Int) {
+    private fun verifyUdpDns(port: Int, dnsServer: Inet4Address) {
         socksHandshake(port).use { control ->
             control.outputStream.write(byteArrayOf(5, 3, 0, 1, 0, 0, 0, 0, 0, 0))
             val relay = readSocksReply(control)
@@ -131,7 +134,7 @@ class NetworkBindingTest {
                     0x12, 0x34, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
                     7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1
                 )
-                val request = byteArrayOf(0, 0, 0, 1, 1, 1, 1, 1, 0, 53) + dns
+                val request = byteArrayOf(0, 0, 0, 1) + dnsServer.address + byteArrayOf(0, 53) + dns
                 udp.send(DatagramPacket(request, request.size, InetAddress.getByName("127.0.0.1"), relay.port))
                 val response = DatagramPacket(ByteArray(4096), 4096)
                 udp.receive(response)

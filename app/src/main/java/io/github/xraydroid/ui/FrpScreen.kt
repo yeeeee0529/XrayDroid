@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.referentialEqualityPolicy
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import io.github.xraydroid.R
 import io.github.xraydroid.runtime.FrpConfigDocument
 import io.github.xraydroid.runtime.FrpConnectionPhase
+import io.github.xraydroid.runtime.FrpNetworkStore
 import io.github.xraydroid.runtime.FrpPhase
 import io.github.xraydroid.runtime.FrpState
 import io.github.xraydroid.runtime.FrpStore
@@ -49,6 +51,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: () -> Unit, onRestart: () -> Unit) {
     val context = LocalContext.current
+    val networkState by FrpNetworkStore.state.collectAsState()
     val scope = rememberCoroutineScope()
     // 設定與權杖只留在記憶體，不寫入 Activity 儲存狀態。
     var draft by remember { mutableStateOf(state.config) }
@@ -190,6 +193,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                             FrpPhase.STOPPED -> stringResource(R.string.frp_phase_stopped)
                             FrpPhase.VALIDATING -> stringResource(R.string.frp_phase_validating)
                             FrpPhase.STARTING -> stringResource(R.string.frp_phase_starting)
+                            FrpPhase.WAITING_FOR_NETWORK -> stringResource(R.string.frp_phase_waiting_network)
                             FrpPhase.RUNNING -> stringResource(state.connection.phase.titleRes)
                             FrpPhase.STOPPING -> stringResource(R.string.frp_phase_stopping)
                             FrpPhase.ERROR -> stringResource(R.string.frp_phase_error)
@@ -221,7 +225,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                     }
                     state.message?.let { Text(it.resolve()) }
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    if (state.phase == FrpPhase.RUNNING || state.phase == FrpPhase.STARTING) {
+                    if (state.phase in setOf(FrpPhase.RUNNING, FrpPhase.STARTING, FrpPhase.WAITING_FOR_NETWORK)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             OutlinedButton(
                                 onClick = { saveThen(onRestart) },
@@ -243,6 +247,18 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                     }
                 }
             }
+        }
+        item {
+            NetworkCard(
+                state = networkState,
+                appliedNetworkLabel = state.outboundNetworkLabel,
+                enabled = !busy && state.phase != FrpPhase.STOPPING,
+                onSelect = FrpNetworkStore::select,
+                onSelectInterface = FrpNetworkStore::selectInterface,
+                onRefresh = FrpNetworkStore::refreshInterfaces,
+                titleRes = R.string.frp_network_title,
+                descriptionRes = R.string.frp_network_description
+            )
         }
         if (state.proxies.isNotEmpty()) {
             item { Text(stringResource(R.string.frp_proxies_title), style = MaterialTheme.typography.titleLarge) }
@@ -413,7 +429,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                                     }
                                 }
                             },
-                            enabled = initialized && !busy && state.phase != FrpPhase.RUNNING
+                            enabled = initialized && !busy && state.phase !in setOf(FrpPhase.RUNNING, FrpPhase.WAITING_FOR_NETWORK)
                         )
                     }
                     Text(

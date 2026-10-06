@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.net.toUri
+import io.github.xraydroid.runtime.FrpNetworkStore
 import io.github.xraydroid.runtime.FrpService
 import io.github.xraydroid.runtime.FrpStore
 import io.github.xraydroid.runtime.NetworkStore
@@ -50,6 +51,7 @@ class MainActivity : ComponentActivity() {
         pendingAction = savedInstanceState?.getString(PENDING_ACTION)
         if (intent.getBooleanExtra("open_frp", false)) openFrpRequest++
         NetworkStore.initialize(applicationContext)
+        FrpNetworkStore.initialize(applicationContext)
         FrpStore.initialize(applicationContext)
         enableEdgeToEdge()
         setContent {

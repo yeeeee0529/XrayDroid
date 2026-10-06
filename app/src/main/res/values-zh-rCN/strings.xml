@@ -109,6 +109,10 @@
     <string name="server_notification_stop">停止服务</string>
     <string name="frp_title">frp</string>
     <string name="frp_client_title">frp 客户端</string>
+    <string name="frp_network_title">frp 网络接口</string>
+    <string name="frp_network_description">选择 frpc 使用的网络接口，与 Xray 分别设置。切换会重启 frpc 并中断现有连接；指定网络不可用时等待恢复。</string>
+    <string name="frp_phase_waiting_network">等待指定网络</string>
+    <string name="frp_message_network_unavailable">指定网络当前不可用，frpc 将在网络恢复后重启。</string>
     <string name="frp_phase_stopped">已停止</string>
     <string name="frp_phase_validating">正在验证配置</string>
     <string name="frp_phase_starting">正在启动</string>

@@ -53,7 +53,7 @@ VPN interfaces appear separately and are not merged into the system default. Int
 
 ## frp client
 
-Settings → frp provides the complete frp client for connecting to an external frp server; the phone does not provide an frps server. This subpage is separate from Outbound network: frpc runs in its own foreground service with its own notification, and starting or stopping it does not affect 3x-ui / Xray. frpc follows Android system routing, including a system VPN; Xray's selected outbound interface does not apply to frpc.
+Settings → frp provides the complete frp client for connecting to an external frp server; the phone does not provide an frps server. This subpage is separate from Outbound network: frpc runs in its own foreground service with its own notification, and starting or stopping it does not affect 3x-ui / Xray. frpc has its own network interface selector, saved independently of Xray. It follows Android system routing by default; selecting an interface binds frpc and DNS to that Android network. Switching restarts frpc; if the selected network becomes unavailable, frpc waits for recovery without falling back.
 
 1. Choose "Form" or "TOML". The form groups basic settings, authentication, transport, TLS, and other settings; expand the sections you need. It supports Token/OIDC, all TCP/KCP/QUIC/WebSocket/WSS transports, and metadata.
 2. "Proxy rules" can add, edit, and remove TCP, UDP, HTTP, HTTPS, STCP, SUDP, XTCP, and TCPMUX proxies; "visitor rules" support STCP, SUDP, and XTCP. Each protocol shows its domain, path, secret, listener, traversal, and fallback fields. The protocol is chosen when the rule is created; add another rule to change it.

@@ -5,7 +5,7 @@
 - `app/src/main/java/io/github/xraydroid/runtime`: foreground service, executable/data layout, scoped process cleanup, observable state.
 - `scripts/build-core.sh`: reproducible arm64 core build; upstream v3.8.5 commit and Xray v26.6.27 hashes are pinned.
 - `scripts/build-frpc.sh`: pinned frpc v0.71.0 Android arm64 build, called by the core build; host frpc/frps are validation-only tools in `.core-cache/`.
-- `FrpService` is independent of `XuiService` and follows system routing. Keep frp and outbound network settings in separate subpages. Full TOML is validated before atomic save; runtime control endpoint, logging and reconnect settings are managed by the app.
+- `FrpService` is independent of `XuiService`; its network selection is persisted independently through `FrpNetworkStore` and defaults to system routing. Selected networks bind frpc and DNS; unavailable selections wait without fallback. Keep frp and outbound network settings in separate subpages. Full TOML is validated before atomic save; runtime control endpoint, logging and reconnect settings are managed by the app.
 - `patches/frp-android.patch` creates an isolated session and protects against parent death. Scope token-command cleanup to that session and the app UID; never kill processes by shell names.
 - `patches/3x-ui-android.patch` and `patches/xray-android-network.patch`: all upstream changes. `upstream/` is ignored and must never be staged as an embedded Git repository.
 - Executables must remain in `nativeLibraryDir`; writable runtime data remains under `filesDir/server`.

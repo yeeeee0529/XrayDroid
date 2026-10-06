@@ -76,11 +76,10 @@ class FrpLifecycleTest {
             await("Native parent-death protection must terminate all session members") { groupMembers(group) == 0 }
         } finally {
             launcher?.destroyForcibly()
-            FrpService.dispatch(context, FrpService.ACTION_STOP)
-            await("Final cleanup must stop the validation service") { FrpStore.state.value.phase == FrpPhase.STOPPED }
+            stopClientIfNeeded()
             OwnedProcesses.terminateGroup(group, OsConstants.SIGKILL)
             FrpStore.setAllowUnsafeTokenCommand(context, originalUnsafe)
-            if (original.isNotBlank()) FrpStore.saveConfig(context, original)
+            if (original.isNotBlank()) assertTrue("Original configuration must restore", FrpStore.saveConfig(context, original))
         }
     }
 
@@ -231,11 +230,8 @@ class FrpLifecycleTest {
             SystemClock.sleep(2000)
             assertEquals(FrpPhase.STOPPED, FrpStore.state.value.phase)
         } finally {
-            FrpService.dispatch(context, FrpService.ACTION_STOP)
-            await("Final cleanup must terminate frpc") {
-                FrpStore.state.value.phase == FrpPhase.STOPPED && !OwnedProcesses.isRunning(layout.executable.absolutePath)
-            }
-            if (originalConfig.isNotBlank()) FrpStore.saveConfig(context, originalConfig)
+            stopClientIfNeeded()
+            if (originalConfig.isNotBlank()) assertTrue("Original configuration must restore", FrpStore.saveConfig(context, originalConfig))
             tcp.close()
             udp.close()
             workers.shutdownNow()
@@ -263,11 +259,9 @@ class FrpLifecycleTest {
                 }
             }
         } finally {
-            FrpService.dispatch(context, FrpService.ACTION_STOP)
-            await("Stop must clear connection state") {
-                FrpStore.state.value.let { it.phase == FrpPhase.STOPPED && it.connection.phase == FrpConnectionPhase.UNKNOWN }
-            }
-            if (original.isNotBlank()) FrpStore.saveConfig(context, original)
+            stopClientIfNeeded()
+            assertEquals(FrpConnectionPhase.UNKNOWN, FrpStore.state.value.connection.phase)
+            if (original.isNotBlank()) assertTrue("Original configuration must restore", FrpStore.saveConfig(context, original))
         }
     }
 
@@ -295,10 +289,22 @@ class FrpLifecycleTest {
                 }
             }
         } finally {
-            FrpService.dispatch(context, FrpService.ACTION_STOP)
-            await("Final cleanup must stop frpc") { FrpStore.state.value.phase == FrpPhase.STOPPED }
-            if (original.isNotBlank()) FrpStore.saveConfig(context, original)
+            stopClientIfNeeded()
+            if (original.isNotBlank()) assertTrue("Original configuration must restore", FrpStore.saveConfig(context, original))
         }
+    }
+
+    private fun stopClientIfNeeded() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val executable = "${context.applicationInfo.nativeLibraryDir}/libfrpc.so"
+        // 不為已停止的核心建立新的停止服務，以免清理到接下來的設定驗證。
+        if (FrpStore.state.value.phase == FrpPhase.STOPPED && !OwnedProcesses.isRunning(executable)) return
+        FrpService.dispatch(context, FrpService.ACTION_STOP)
+        await("Final cleanup must release the native client") {
+            FrpStore.state.value.phase == FrpPhase.STOPPED && !OwnedProcesses.isRunning(executable)
+        }
+        instrumentation.waitForIdleSync()
     }
 
     private fun proxiesReady(): Boolean = FrpStore.state.value.let { state ->

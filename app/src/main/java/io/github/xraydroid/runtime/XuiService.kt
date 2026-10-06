@@ -241,8 +241,6 @@ class XuiService : Service() {
         }
     }
 
-    private fun NetworkState.followsSystem(): Boolean = selectedMode == OutboundNetworkMode.SYSTEM && selectedInterfaceName == null
-
     private fun panelReady(): Boolean = runCatching {
         val connection = URL(
             ServerStore.state.value.panelUrl

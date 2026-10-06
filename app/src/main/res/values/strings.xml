@@ -122,6 +122,10 @@
     <!-- frp 用戶端 -->
     <string name="frp_title">frp</string>
     <string name="frp_client_title">frp 用戶端</string>
+    <string name="frp_network_title">frp 網路介面</string>
+    <string name="frp_network_description">選擇 frpc 使用的網路介面，與 Xray 分別設定。切換會重新啟動 frpc 並中斷既有連線；指定網路不可用時等待恢復。</string>
+    <string name="frp_phase_waiting_network">等待指定網路</string>
+    <string name="frp_message_network_unavailable">指定網路目前不可用，frpc 將在網路恢復後重新啟動。</string>
     <string name="frp_phase_stopped">已停止</string>
     <string name="frp_phase_validating">正在驗證設定</string>
     <string name="frp_phase_starting">正在啟動</string>

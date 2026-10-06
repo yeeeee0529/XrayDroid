@@ -1,5 +1,6 @@
 package io.github.xraydroid.ui
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,7 +39,9 @@ fun NetworkCard(
     enabled: Boolean,
     onSelect: (OutboundNetworkMode) -> Unit,
     onSelectInterface: (String) -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    @StringRes titleRes: Int = R.string.network_title,
+    @StringRes descriptionRes: Int = R.string.network_description
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -52,14 +55,14 @@ fun NetworkCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val refreshLabel = stringResource(R.string.network_refresh)
-                Text(stringResource(R.string.network_title), style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(titleRes), style = MaterialTheme.typography.titleLarge)
                 TextButton(
                     onClick = onRefresh,
                     modifier = Modifier.semantics { contentDescription = refreshLabel }
                 ) { Text(refreshLabel) }
             }
             Text(
-                stringResource(R.string.network_description),
+                stringResource(descriptionRes),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

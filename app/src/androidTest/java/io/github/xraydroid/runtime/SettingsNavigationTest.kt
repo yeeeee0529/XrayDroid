@@ -3,11 +3,15 @@ package io.github.xraydroid.runtime
 import android.accessibilityservice.AccessibilityService
 import android.app.KeyguardManager
 import android.content.Intent
+import android.graphics.Rect
 import android.os.SystemClock
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.xraydroid.MainActivity
+import io.github.xraydroid.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -46,9 +50,16 @@ class SettingsNavigationTest {
         awaitText("frp")
         assertTrue("Network controls must disappear after returning to settings", matchingNodes("重新偵測").isEmpty())
         clickText("frp")
-        awaitText("frpc 用戶端")
-        awaitText("配置模式")
-        assertTrue("frp must not display outbound network controls", matchingNodes("跟隨系統").isEmpty())
+        awaitText(context.getString(R.string.frp_client_title))
+        scrollToText(context.getString(R.string.frp_network_title))
+        instrumentation.runOnMainSync { FrpNetworkStore.selectInterface("frp-navigation-unavailable") }
+        scrollToText("跟隨系統")
+        clickText("跟隨系統")
+        assertEquals(OutboundNetworkMode.SYSTEM, FrpNetworkStore.state.value.selectedMode)
+        assertTrue("FRP system selection must clear its explicit interface", FrpNetworkStore.state.value.selectedInterfaceName == null)
+        assertEquals("FRP controls must preserve Xray selection", OutboundNetworkMode.SYSTEM, NetworkStore.state.value.selectedMode)
+        assertTrue(NetworkStore.state.value.selectedInterfaceName == null)
+        scrollToText("配置模式")
         assertTrue(
             "System Back action must return from frp to settings",
             instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
@@ -67,6 +78,53 @@ class SettingsNavigationTest {
             instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
         )
         awaitText("XrayDroid")
+    }
+
+    private fun scrollToText(text: String) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        for (action in listOf(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+            repeat(20) {
+                if (matchingNodes(text).isNotEmpty()) return
+                val root = instrumentation.uiAutomation.rootInActiveWindow
+                fun scrollBounds(node: AccessibilityNodeInfo): Rect? {
+                    if (!node.isVisibleToUser) return null
+                    if (node.isScrollable) return Rect().also(node::getBoundsInScreen)
+                    repeat(node.childCount) { index ->
+                        node.getChild(index)?.let(::scrollBounds)?.let { return it }
+                    }
+                    return null
+                }
+                if (root?.packageName?.toString() == instrumentation.targetContext.packageName) {
+                    root?.let(::scrollBounds)?.let { bounds ->
+                        val x = bounds.exactCenterX()
+                        val top = bounds.top + bounds.height() * 0.25f
+                        val bottom = bounds.bottom - bounds.height() * 0.25f
+                        val start = if (action == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) bottom else top
+                        val end = if (action == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) top else bottom
+                        val downTime = SystemClock.uptimeMillis()
+                        fun event(kind: Int, time: Long, y: Float) {
+                            val input = MotionEvent.obtain(downTime, time, kind, x, y, 0).apply {
+                                source = InputDevice.SOURCE_TOUCHSCREEN
+                            }
+                            try {
+                                assertTrue("Navigation swipe must be accepted", instrumentation.uiAutomation.injectInputEvent(input, true))
+                            } finally {
+                                input.recycle()
+                            }
+                        }
+                        event(MotionEvent.ACTION_DOWN, downTime, start)
+                        for (step in 1..8) {
+                            SystemClock.sleep(30)
+                            event(MotionEvent.ACTION_MOVE, SystemClock.uptimeMillis(), start + (end - start) * step / 8)
+                        }
+                        event(MotionEvent.ACTION_UP, SystemClock.uptimeMillis(), end)
+                    }
+                }
+                instrumentation.waitForIdleSync()
+                SystemClock.sleep(100)
+            }
+        }
+        throw AssertionError("Expected scrollable navigation label: $text")
     }
 
     private fun awaitText(text: String) {

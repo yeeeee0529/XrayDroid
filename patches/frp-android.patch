@@ -10,6 +10,83 @@ index 82b7304..67c8345 100644
  	subRouter.HandleFunc("/api/reload", httppkg.MakeHTTPHandlerFunc(apiController.Reload)).Methods(http.MethodGet)
  	subRouter.HandleFunc("/api/stop", httppkg.MakeHTTPHandlerFunc(apiController.Stop)).Methods(http.MethodPost)
  	subRouter.HandleFunc("/api/status", httppkg.MakeHTTPHandlerFunc(apiController.Status)).Methods(http.MethodGet)
+diff --git a/client/connector.go b/client/connector.go
+index 34b24f0..17200bf 100644
+--- a/client/connector.go
++++ b/client/connector.go
+@@ -32,6 +32,7 @@ import (
+ 	"github.com/fatedier/frp/pkg/msg"
+ 	"github.com/fatedier/frp/pkg/proto/wire"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+ )
+@@ -81,9 +82,10 @@ type defaultConnectorImpl struct {
+ 	ctx context.Context
+ 	cfg *v1.ClientCommonConfig
+ 
+-	muxSession *fmux.Session
+-	quicConn   *quic.Conn
+-	closeOnce  sync.Once
++	muxSession    *fmux.Session
++	quicConn      *quic.Conn
++	quicTransport *quic.Transport
++	closeOnce     sync.Once
+ }
+ 
+ func NewConnector(ctx context.Context, cfg *v1.ClientCommonConfig) Connector {
+@@ -123,7 +125,27 @@ func (c *defaultConnectorImpl) Open() error {
+ 		}
+ 		tlsConfig.NextProtos = []string{"frp"}
+ 
+-		conn, err := quic.DialAddr(
++		dial := quic.DialAddr
++		if androidnet.Selected() {
++			remote, err := net.ResolveUDPAddr("udp", net.JoinHostPort(c.cfg.ServerAddr, strconv.Itoa(c.cfg.ServerPort)))
++			if err != nil {
++				return err
++			}
++			packet, err := androidnet.ListenUDPForRemote("udp", remote)
++			if err != nil {
++				return err
++			}
++			c.quicTransport = &quic.Transport{Conn: packet}
++			dial = func(ctx context.Context, _ string, tlsConfig *tls.Config, config *quic.Config) (*quic.Conn, error) {
++				conn, err := c.quicTransport.Dial(ctx, remote, tlsConfig, config)
++				if err != nil {
++					c.quicTransport.Close()
++					packet.Close()
++				}
++				return conn, err
++			}
++		}
++		conn, err := dial(
+ 			c.ctx,
+ 			net.JoinHostPort(c.cfg.ServerAddr, strconv.Itoa(c.cfg.ServerPort)),
+ 			tlsConfig, &quic.Config{
+@@ -205,6 +227,10 @@ func (c *defaultConnectorImpl) realConnect() (net.Conn, error) {
+ 		}
+ 	}
+ 
++	if androidnet.Selected() {
++		return c.androidConnect(tlsConfig)
++	}
++
+ 	proxyType, addr, auth, err := libnet.ParseProxyURL(c.cfg.Transport.ProxyURL)
+ 	if err != nil {
+ 		xl.Errorf("fail to parse proxy url")
+@@ -255,6 +281,10 @@ func (c *defaultConnectorImpl) Close() error {
+ 		if c.quicConn != nil {
+ 			_ = c.quicConn.CloseWithError(0, "")
+ 		}
++		if c.quicTransport != nil {
++			_ = c.quicTransport.Close()
++			_ = c.quicTransport.Conn.Close()
++		}
+ 		if c.muxSession != nil {
+ 			_ = c.muxSession.Close()
+ 		}
 diff --git a/client/control_session.go b/client/control_session.go
 index e3ed27f..f395a7b 100644
 --- a/client/control_session.go
@@ -32,6 +109,81 @@ index e3ed27f..f395a7b 100644
  	}
  
  	var controlRW io.ReadWriter = conn
+diff --git a/client/health/health.go b/client/health/health.go
+index d298e61..596893b 100644
+--- a/client/health/health.go
++++ b/client/health/health.go
+@@ -25,6 +25,7 @@ import (
+ 	"time"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+ )
+ 
+@@ -155,7 +156,7 @@ func (monitor *Monitor) doTCPCheck(ctx context.Context) error {
+ 		return nil
+ 	}
+ 
+-	var d net.Dialer
++	d := net.Dialer{Control: androidnet.Control(nil)}
+ 	conn, err := d.DialContext(ctx, "tcp", monitor.addr)
+ 	if err != nil {
+ 		return err
+diff --git a/client/proxy/proxy.go b/client/proxy/proxy.go
+index e982c03..70e9159 100644
+--- a/client/proxy/proxy.go
++++ b/client/proxy/proxy.go
+@@ -25,7 +25,6 @@ import (
+ 	"time"
+ 
+ 	libio "github.com/fatedier/golib/io"
+-	libnet "github.com/fatedier/golib/net"
+ 	"golang.org/x/time/rate"
+ 
+ 	"github.com/fatedier/frp/pkg/config/types"
+@@ -33,6 +32,7 @@ import (
+ 	"github.com/fatedier/frp/pkg/msg"
+ 	plugin "github.com/fatedier/frp/pkg/plugin/client"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	"github.com/fatedier/frp/pkg/util/limit"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+@@ -228,10 +228,8 @@ func (pxy *BaseProxy) HandleTCPWorkConnection(workConn net.Conn, m *msg.StartWor
+ 		defer recycleFn()
+ 	}
+ 
+-	localConn, err := libnet.Dial(
+-		net.JoinHostPort(baseCfg.LocalIP, strconv.Itoa(baseCfg.LocalPort)),
+-		libnet.WithTimeout(10*time.Second),
+-	)
++	dialer := net.Dialer{Timeout: 10 * time.Second, Control: androidnet.Control(nil)}
++	localConn, err := dialer.DialContext(pxy.ctx, "tcp", net.JoinHostPort(baseCfg.LocalIP, strconv.Itoa(baseCfg.LocalPort)))
+ 	if err != nil {
+ 		workConn.Close()
+ 		xl.Errorf("connect to local service [%s:%d] error: %v", baseCfg.LocalIP, baseCfg.LocalPort, err)
+diff --git a/client/proxy/xtcp.go b/client/proxy/xtcp.go
+index aef6678..f1aec23 100644
+--- a/client/proxy/xtcp.go
++++ b/client/proxy/xtcp.go
+@@ -30,6 +30,7 @@ import (
+ 	"github.com/fatedier/frp/pkg/naming"
+ 	"github.com/fatedier/frp/pkg/nathole"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ )
+ 
+@@ -143,7 +144,7 @@ func (pxy *XTCPProxy) listenByKCP(listenConn *net.UDPConn, raddr *net.UDPAddr, s
+ 	xl := pxy.xl
+ 	listenConn.Close()
+ 	laddr, _ := net.ResolveUDPAddr("udp", listenConn.LocalAddr().String())
+-	lConn, err := net.DialUDP("udp", laddr, raddr)
++	lConn, err := androidnet.DialUDP("udp", laddr, raddr)
+ 	if err != nil {
+ 		xl.Warnf("dial udp error: %v", err)
+ 		return
 diff --git a/client/service.go b/client/service.go
 index 7964050..7f11f3f 100644
 --- a/client/service.go
@@ -78,6 +230,78 @@ index 7964050..7f11f3f 100644
  		svr.ctlMu.Unlock()
  		return true, nil
  	}
+diff --git a/client/visitor/stcp.go b/client/visitor/stcp.go
+index 03ec51f..7c33460 100644
+--- a/client/visitor/stcp.go
++++ b/client/visitor/stcp.go
+@@ -21,6 +21,7 @@ import (
+ 	libio "github.com/fatedier/golib/io"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+ )
+ 
+@@ -32,7 +33,7 @@ type STCPVisitor struct {
+ 
+ func (sv *STCPVisitor) Run() (err error) {
+ 	if sv.cfg.BindPort > 0 {
+-		sv.l, err = net.Listen("tcp", net.JoinHostPort(sv.cfg.BindAddr, strconv.Itoa(sv.cfg.BindPort)))
++		sv.l, err = androidnet.Listen("tcp", net.JoinHostPort(sv.cfg.BindAddr, strconv.Itoa(sv.cfg.BindPort)))
+ 		if err != nil {
+ 			return
+ 		}
+diff --git a/client/visitor/sudp.go b/client/visitor/sudp.go
+index f1939bd..a20682d 100644
+--- a/client/visitor/sudp.go
++++ b/client/visitor/sudp.go
+@@ -26,6 +26,7 @@ import (
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
+ 	"github.com/fatedier/frp/pkg/msg"
+ 	"github.com/fatedier/frp/pkg/proto/udp"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+ )
+@@ -51,7 +52,7 @@ func (sv *SUDPVisitor) Run() (err error) {
+ 		return fmt.Errorf("sudp ResolveUDPAddr error: %v", err)
+ 	}
+ 
+-	sv.udpConn, err = net.ListenUDP("udp", addr)
++	sv.udpConn, err = androidnet.ListenUDP("udp", addr, true)
+ 	if err != nil {
+ 		return fmt.Errorf("listen udp port %s error: %v", addr.String(), err)
+ 	}
+diff --git a/client/visitor/xtcp.go b/client/visitor/xtcp.go
+index e7a6089..d945269 100644
+--- a/client/visitor/xtcp.go
++++ b/client/visitor/xtcp.go
+@@ -34,6 +34,7 @@ import (
+ 	"github.com/fatedier/frp/pkg/naming"
+ 	"github.com/fatedier/frp/pkg/nathole"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ 	"github.com/fatedier/frp/pkg/util/util"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+@@ -61,7 +62,7 @@ func (sv *XTCPVisitor) Run() (err error) {
+ 	}
+ 
+ 	if sv.cfg.BindPort > 0 {
+-		sv.l, err = net.Listen("tcp", net.JoinHostPort(sv.cfg.BindAddr, strconv.Itoa(sv.cfg.BindPort)))
++		sv.l, err = androidnet.Listen("tcp", net.JoinHostPort(sv.cfg.BindAddr, strconv.Itoa(sv.cfg.BindPort)))
+ 		if err != nil {
+ 			return
+ 		}
+@@ -337,7 +338,7 @@ func NewKCPTunnelSession() TunnelSession {
+ func (ks *KCPTunnelSession) Init(listenConn *net.UDPConn, raddr *net.UDPAddr) error {
+ 	listenConn.Close()
+ 	laddr, _ := net.ResolveUDPAddr("udp", listenConn.LocalAddr().String())
+-	lConn, err := net.DialUDP("udp", laddr, raddr)
++	lConn, err := androidnet.DialUDP("udp", laddr, raddr)
+ 	if err != nil {
+ 		return fmt.Errorf("dial udp error: %v", err)
+ 	}
 diff --git a/cmd/frpc/sub/root.go b/cmd/frpc/sub/root.go
 index 8a0f184..082fbb5 100644
 --- a/cmd/frpc/sub/root.go
@@ -92,90 +316,680 @@ index 8a0f184..082fbb5 100644
  	configSource := source.NewConfigSource()
  	if err := configSource.ReplaceAll(result.Proxies, result.Visitors); err != nil {
  		return fmt.Errorf("failed to set config source: %w", err)
-diff --git a/cmd/frpc/main_android.go b/cmd/frpc/main_android.go
-new file mode 100644
-index 0000000..d7024a3
---- /dev/null
-+++ b/cmd/frpc/main_android.go
-@@ -0,0 +1,27 @@
-+//go:build android
+diff --git a/pkg/nathole/discovery.go b/pkg/nathole/discovery.go
+index 241b0f6..be31fc2 100644
+--- a/pkg/nathole/discovery.go
++++ b/pkg/nathole/discovery.go
+@@ -21,6 +21,8 @@ import (
+ 	"time"
+ 
+ 	"github.com/fatedier/golib/net/stun"
 +
-+package main
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ )
+ 
+ var responseTimeout = 3 * time.Second
+@@ -65,7 +67,7 @@ func listen(localAddr string) (*discoverConn, error) {
+ 		}
+ 		local = addr
+ 	}
+-	conn, err := net.ListenUDP("udp4", local)
++	conn, err := androidnet.ListenUDP("udp4", local, false)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+diff --git a/pkg/nathole/nathole.go b/pkg/nathole/nathole.go
+index bea3d37..0bea285 100644
+--- a/pkg/nathole/nathole.go
++++ b/pkg/nathole/nathole.go
+@@ -30,6 +30,7 @@ import (
+ 
+ 	"github.com/fatedier/frp/pkg/msg"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+ )
+ 
+@@ -135,7 +136,7 @@ func Prepare(stunServers []string, opts PrepareOptions) (*PrepareResult, error)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("resolve local udp addr error: %v", err)
+ 	}
+-	listenConn, err := net.ListenUDP("udp4", laddr)
++	listenConn, err := androidnet.ListenUDP("udp4", laddr, false)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("listen local udp addr error: %v", err)
+ 	}
+@@ -213,7 +214,7 @@ func MakeHole(ctx context.Context, listenConn *net.UDPConn, m *msg.NatHoleResp,
+ 
+ 		if m.DetectBehavior.ListenRandomPorts > 0 {
+ 			for i := 0; i < m.DetectBehavior.ListenRandomPorts; i++ {
+-				tmpConn, err := net.ListenUDP("udp4", nil)
++				tmpConn, err := androidnet.ListenUDP("udp4", nil, false)
+ 				if err != nil {
+ 					xl.Warnf("listen random udp addr error: %v", err)
+ 					continue
+diff --git a/pkg/plugin/client/http2https.go b/pkg/plugin/client/http2https.go
+index f5a6160..995d635 100644
+--- a/pkg/plugin/client/http2https.go
++++ b/pkg/plugin/client/http2https.go
+@@ -22,6 +22,7 @@ import (
+ 	"net/http/httputil"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ )
+ 
+ func init() {
+@@ -42,6 +43,7 @@ func NewHTTP2HTTPSPlugin(_ PluginContext, options v1.ClientPluginOptions) (Plugi
+ 	}
+ 
+ 	tr := &http.Transport{
++		DialContext:     androidnet.DialContext,
+ 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+ 	}
+ 
+diff --git a/pkg/plugin/client/http_proxy.go b/pkg/plugin/client/http_proxy.go
+index 0145f44..94c121f 100644
+--- a/pkg/plugin/client/http_proxy.go
++++ b/pkg/plugin/client/http_proxy.go
+@@ -21,7 +21,6 @@ import (
+ 	"context"
+ 	"encoding/base64"
+ 	"io"
+-	"net"
+ 	"net/http"
+ 	"strings"
+ 	"time"
+@@ -30,6 +29,7 @@ import (
+ 	libnet "github.com/fatedier/golib/net"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ 	"github.com/fatedier/frp/pkg/util/util"
+ )
+@@ -174,7 +174,7 @@ func (hp *HTTPProxy) handleConnectReq(req *http.Request, rwc io.ReadWriteCloser)
+ 		return
+ 	}
+ 
+-	remote, err := net.Dial("tcp", req.URL.Host)
++	remote, err := androidnet.DialContext(req.Context(), "tcp", req.URL.Host)
+ 	if err != nil {
+ 		res := &http.Response{
+ 			StatusCode: 400,
+diff --git a/pkg/plugin/client/https2https.go b/pkg/plugin/client/https2https.go
+index 7b9e455..476e665 100644
+--- a/pkg/plugin/client/https2https.go
++++ b/pkg/plugin/client/https2https.go
+@@ -22,6 +22,7 @@ import (
+ 	"net/http/httputil"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ )
+ 
+ func init() {
+@@ -42,6 +43,7 @@ func NewHTTPS2HTTPSPlugin(_ PluginContext, options v1.ClientPluginOptions) (Plug
+ 	}
+ 
+ 	tr := &http.Transport{
++		DialContext:     androidnet.DialContext,
+ 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+ 	}
+ 
+diff --git a/pkg/plugin/client/socks5.go b/pkg/plugin/client/socks5.go
+index 752dd1e..18b3fc4 100644
+--- a/pkg/plugin/client/socks5.go
++++ b/pkg/plugin/client/socks5.go
+@@ -24,6 +24,7 @@ import (
+ 	gosocks5 "github.com/armon/go-socks5"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ )
+ 
+@@ -39,6 +40,7 @@ func NewSocks5Plugin(_ PluginContext, options v1.ClientPluginOptions) (p Plugin,
+ 	opts := options.(*v1.Socks5PluginOptions)
+ 
+ 	cfg := &gosocks5.Config{
++		Dial:   androidnet.DialContext,
+ 		Logger: log.New(io.Discard, "", log.LstdFlags),
+ 	}
+ 	if opts.Username != "" || opts.Password != "" {
+diff --git a/pkg/plugin/client/tls2raw.go b/pkg/plugin/client/tls2raw.go
+index 6ce0542..93fd798 100644
+--- a/pkg/plugin/client/tls2raw.go
++++ b/pkg/plugin/client/tls2raw.go
+@@ -19,12 +19,12 @@ package client
+ import (
+ 	"context"
+ 	"crypto/tls"
+-	"net"
+ 
+ 	libio "github.com/fatedier/golib/io"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+ )
+@@ -65,7 +65,7 @@ func (p *TLS2RawPlugin) Handle(ctx context.Context, connInfo *ConnectionInfo) {
+ 		tlsConn.Close()
+ 		return
+ 	}
+-	rawConn, err := net.Dial("tcp", p.opts.LocalAddr)
++	rawConn, err := androidnet.DialContext(ctx, "tcp", p.opts.LocalAddr)
+ 	if err != nil {
+ 		xl.Warnf("dial to local addr error: %v", err)
+ 		tlsConn.Close()
+diff --git a/pkg/proto/udp/udp.go b/pkg/proto/udp/udp.go
+index ec3bd94..d9fceec 100644
+--- a/pkg/proto/udp/udp.go
++++ b/pkg/proto/udp/udp.go
+@@ -23,6 +23,7 @@ import (
+ 	"github.com/fatedier/golib/pool"
+ 
+ 	"github.com/fatedier/frp/pkg/msg"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ )
+ 
+@@ -120,7 +121,7 @@ func Forwarder(dstAddr *net.UDPAddr, readCh <-chan *msg.UDPPacket, sendCh chan<-
+ 			mu.Lock()
+ 			udpConn, ok := udpConnMap[udpMsg.RemoteAddr.String()]
+ 			if !ok {
+-				udpConn, err = net.DialUDP("udp", nil, dstAddr)
++				udpConn, err = androidnet.DialUDP("udp", nil, dstAddr)
+ 				if err != nil {
+ 					mu.Unlock()
+ 					continue
+diff --git a/pkg/ssh/gateway.go b/pkg/ssh/gateway.go
+index 4d90f33..c7a4d43 100644
+--- a/pkg/ssh/gateway.go
++++ b/pkg/ssh/gateway.go
+@@ -25,6 +25,7 @@ import (
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	"github.com/fatedier/frp/pkg/util/log"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ )
+@@ -90,7 +91,7 @@ func NewGateway(
+ 		}, nil
+ 	}
+ 
+-	ln, err := net.Listen("tcp", net.JoinHostPort(bindAddr, strconv.Itoa(cfg.BindPort)))
++	ln, err := androidnet.Listen("tcp", net.JoinHostPort(bindAddr, strconv.Itoa(cfg.BindPort)))
+ 	if err != nil {
+ 		return nil, err
+ 	}
+diff --git a/pkg/util/http/server.go b/pkg/util/http/server.go
+index 0bca899..588e9bc 100644
+--- a/pkg/util/http/server.go
++++ b/pkg/util/http/server.go
+@@ -26,6 +26,7 @@ import (
+ 
+ 	"github.com/fatedier/frp/assets"
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ )
+ 
+@@ -53,7 +54,7 @@ func NewServer(cfg v1.WebServerConfig) (*Server, error) {
+ 		addr = ":http"
+ 	}
+ 
+-	ln, err := net.Listen("tcp", addr)
++	ln, err := androidnet.Listen("tcp", addr)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+diff --git a/pkg/util/net/dns.go b/pkg/util/net/dns.go
+index 441b1e6..ca01753 100644
+--- a/pkg/util/net/dns.go
++++ b/pkg/util/net/dns.go
+@@ -17,6 +17,8 @@ package net
+ import (
+ 	"context"
+ 	"net"
++
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ )
+ 
+ func SetDefaultDNSAddress(dnsAddress string) {
+@@ -27,7 +29,7 @@ func SetDefaultDNSAddress(dnsAddress string) {
+ 	net.DefaultResolver = &net.Resolver{
+ 		PreferGo: true,
+ 		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+-			return net.Dial(network, dnsAddress)
++			return androidnet.DialContext(ctx, network, dnsAddress)
+ 		},
+ 	}
+ }
+diff --git a/pkg/util/net/udp.go b/pkg/util/net/udp.go
+index aa4d983..fc254de 100644
+--- a/pkg/util/net/udp.go
++++ b/pkg/util/net/udp.go
+@@ -23,6 +23,8 @@ import (
+ 	"time"
+ 
+ 	"github.com/fatedier/golib/pool"
++
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ )
+ 
+ type UDPPacket struct {
+@@ -163,7 +165,7 @@ func ListenUDP(bindAddr string, bindPort int) (l *UDPListener, err error) {
+ 	if err != nil {
+ 		return l, err
+ 	}
+-	readConn, err := net.ListenUDP("udp", udpAddr)
++	readConn, err := androidnet.ListenUDP("udp", udpAddr, true)
+ 	if err != nil {
+ 		return l, err
+ 	}
+diff --git a/pkg/util/system/system_android.go b/pkg/util/system/system_android.go
+index 6fcfdbc..c528fca 100644
+--- a/pkg/util/system/system_android.go
++++ b/pkg/util/system/system_android.go
+@@ -20,6 +20,8 @@ import (
+ 	"os/exec"
+ 	"strings"
+ 	"time"
++
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ )
+ 
+ func EnableCompatibilityMode() {
+@@ -44,6 +46,10 @@ func fixTimezone() {
+ // If it is not available, it will default to using 8.8.8.8 as the DNS server.
+ // This is a workaround for the issue that golang can't get the default DNS servers on Android.
+ func fixDNSResolver() {
++	// 指定網路失效時保留失敗，不啟用公共 DNS 回退。
++	if androidnet.Selected() {
++		return
++	}
+ 	// First, we attempt to resolve a domain. If resolution is successful, no modifications are necessary.
+ 	// In real-world scenarios, users may have already configured /etc/resolv.conf, or compiled directly
+ 	// in the Android environment instead of using cross-platform compilation, so this issue does not arise.
+diff --git a/client/android_connector.go b/client/android_connector.go
+new file mode 100644
+index 0000000..7706dea
+--- /dev/null
++++ b/client/android_connector.go
+@@ -0,0 +1,238 @@
++package client
 +
 +import (
-+	"os"
-+	"syscall"
++	"bufio"
++	"context"
++	"crypto/tls"
++	"encoding/base64"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"strings"
 +	"time"
++
++	"github.com/Azure/go-ntlmssp"
++	libnet "github.com/fatedier/golib/net"
++	kcp "github.com/xtaci/kcp-go/v5"
++	"golang.org/x/net/proxy"
++
++	"github.com/fatedier/frp/pkg/util/androidnet"
++	netpkg "github.com/fatedier/frp/pkg/util/net"
++	"github.com/samber/lo"
 +)
 +
-+func init() {
-+	// 獨立 session 的程序群組 ID 等於 frpc PID，讓 App 可清理驗證命令的子程序。
-+	if _, err := syscall.Setsid(); err != nil {
-+		os.Exit(1)
++// golib 沒有公開的通訊端控制鉤子；指定網路時在 connect 前建立並綁定通訊端。
++func (c *defaultConnectorImpl) androidConnect(tlsConfig *tls.Config) (net.Conn, error) {
++	destination := net.JoinHostPort(c.cfg.ServerAddr, fmt.Sprint(c.cfg.ServerPort))
++	proxyType, proxyAddress, auth, err := libnet.ParseProxyURL(c.cfg.Transport.ProxyURL)
++	if err != nil {
++		return nil, err
 +	}
-+	parentPID := os.Getppid()
-+	go func() {
-+		for {
-+			time.Sleep(250 * time.Millisecond)
-+			// Go goroutine 可能切換執行緒，改以程序父 PID 避免綁定 thread 的死亡訊號。
-+			if parentPID <= 1 || os.Getppid() != parentPID {
-+				_ = syscall.Kill(-os.Getpid(), syscall.SIGKILL)
-+				os.Exit(1)
++	protocol := c.cfg.Transport.Protocol
++	if protocol == "kcp" {
++		if proxyAddress != "" {
++			return nil, fmt.Errorf("KCP proxy is unsupported with a selected Android network")
++		}
++		remote, err := net.ResolveUDPAddr("udp", destination)
++		if err != nil {
++			return nil, err
++		}
++		udpConn, err := androidnet.ListenUDPForRemote("udp", remote)
++		if err != nil {
++			return nil, err
++		}
++		conn, err := kcp.NewConn2(remote, nil, 10, 3, udpConn)
++		if err != nil {
++			udpConn.Close()
++			return nil, err
++		}
++		conn.SetStreamMode(true)
++		conn.SetWriteDelay(true)
++		conn.SetNoDelay(1, 20, 2, 1)
++		conn.SetWindowSize(128, 512)
++		conn.SetMtu(1350)
++		conn.SetACKNoDelay(false)
++		_ = conn.SetReadBuffer(4194304)
++		_ = conn.SetWriteBuffer(4194304)
++		// KCP 的外部通訊端由呼叫者負責關閉。
++		stream := &androidPacketStream{Conn: conn, packet: udpConn}
++		_, wrapped, err := netpkg.DialHookCustomTLSHeadByte(tlsConfig != nil, lo.FromPtr(c.cfg.Transport.TLS.DisableCustomTLSFirstByte))(c.ctx, stream, destination)
++		if err != nil {
++			stream.Close()
++			return nil, err
++		}
++		if tlsConfig != nil {
++			wrapped = tls.Client(wrapped, tlsConfig)
++		}
++		return wrapped, nil
++	}
++	if protocol != "tcp" && protocol != "websocket" && protocol != "wss" {
++		return nil, fmt.Errorf("unsupported selected Android network protocol: %s", protocol)
++	}
++	dialer := net.Dialer{
++		Timeout:   time.Duration(c.cfg.Transport.DialServerTimeout) * time.Second,
++		KeepAlive: time.Duration(c.cfg.Transport.DialServerKeepAlive) * time.Second,
++		Control:   androidnet.Control(nil),
++	}
++	if address := c.cfg.Transport.ConnectServerLocalIP; address != "" {
++		local, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(address, "0"))
++		if err != nil {
++			return nil, err
++		}
++		dialer.LocalAddr = local
++	}
++	ctx, cancel := context.WithTimeout(c.ctx, dialer.Timeout)
++	defer cancel()
++	var conn net.Conn
++	if proxyType == "socks5" {
++		var credentials *proxy.Auth
++		if auth != nil {
++			credentials = &proxy.Auth{User: auth.Username, Password: auth.Passwd}
++		}
++		p, err := proxy.SOCKS5("tcp", proxyAddress, credentials, &dialer)
++		if err != nil {
++			return nil, err
++		}
++		conn, err = p.(proxy.ContextDialer).DialContext(ctx, "tcp", destination)
++		if err != nil {
++			return nil, err
++		}
++		if deadline, ok := ctx.Deadline(); ok {
++			_ = conn.SetDeadline(deadline)
++		}
++	} else {
++		address := destination
++		if proxyAddress != "" {
++			address = proxyAddress
++		}
++		conn, err = dialer.DialContext(ctx, "tcp", address)
++		if err != nil {
++			return nil, err
++		}
++		if deadline, ok := ctx.Deadline(); ok {
++			_ = conn.SetDeadline(deadline)
++		}
++		if proxyAddress != "" {
++			conn, err = androidProxyConnect(ctx, conn, destination, proxyAddress, proxyType, auth)
++			if err != nil {
++				conn.Close()
++				return nil, err
 +			}
 +		}
-+	}()
++	}
++	// 成功後保留 TLS 與 WebSocket 的既有順序。
++	current := conn
++	if protocol == "wss" {
++		current = tls.Client(current, tlsConfig)
++		_, current, err = netpkg.DialHookWebsocket("wss", tlsConfig.ServerName)(ctx, current, destination)
++	} else {
++		if protocol == "websocket" {
++			_, current, err = netpkg.DialHookWebsocket("websocket", "")(ctx, current, destination)
++		}
++		if err == nil {
++			_, current, err = netpkg.DialHookCustomTLSHeadByte(tlsConfig != nil, lo.FromPtr(c.cfg.Transport.TLS.DisableCustomTLSFirstByte))(ctx, current, destination)
++		}
++		if err == nil && tlsConfig != nil {
++			current = tls.Client(current, tlsConfig)
++		}
++	}
++	if err != nil {
++		conn.Close()
++		return nil, err
++	}
++	_ = conn.SetDeadline(time.Time{})
++	return current, nil
 +}
-diff --git a/cmd/frpc/sub/runtime_android.go b/cmd/frpc/sub/runtime_android.go
-new file mode 100644
-index 0000000..861746f
---- /dev/null
-+++ b/cmd/frpc/sub/runtime_android.go
-@@ -0,0 +1,31 @@
-+//go:build android
 +
-+package sub
++type androidPacketStream struct {
++	net.Conn
++	packet net.PacketConn
++}
++
++func (c *androidPacketStream) Close() error {
++	err := c.Conn.Close()
++	_ = c.packet.Close()
++	return err
++}
++
++func androidProxyConnect(ctx context.Context, conn net.Conn, destination, address, kind string, auth *libnet.ProxyAuth) (net.Conn, error) {
++	if kind == "https" {
++		host, _, err := net.SplitHostPort(address)
++		if err != nil {
++			return conn, err
++		}
++		tlsConn := tls.Client(conn, &tls.Config{ServerName: host})
++		if err := tlsConn.HandshakeContext(ctx); err != nil {
++			return conn, err
++		}
++		conn = tlsConn
++	} else if kind != "http" && kind != "ntlm" {
++		return conn, fmt.Errorf("unsupported Android network proxy type: %s", kind)
++	}
++	request, err := http.NewRequestWithContext(ctx, "CONNECT", "http://"+destination, nil)
++	if err != nil {
++		return conn, err
++	}
++	if auth != nil {
++		if kind == "ntlm" {
++			message, err := ntlmssp.NewNegotiateMessage("", "")
++			if err != nil {
++				return conn, err
++			}
++			request.Header.Set("Proxy-Authorization", "Negotiate "+base64.StdEncoding.EncodeToString(message))
++		} else {
++			request.SetBasicAuth(auth.Username, auth.Passwd)
++			request.Header.Set("Proxy-Authorization", request.Header.Get("Authorization"))
++			request.Header.Del("Authorization")
++		}
++	}
++	reader := bufio.NewReader(conn)
++	if err := request.Write(conn); err != nil {
++		return conn, err
++	}
++	response, err := http.ReadResponse(reader, request)
++	if err != nil {
++		return conn, err
++	}
++	if response.StatusCode == http.StatusProxyAuthRequired && kind == "ntlm" && auth != nil {
++		challenge := response.Header.Get("Proxy-Authenticate")
++		_, _ = io.Copy(io.Discard, response.Body)
++		response.Body.Close()
++		if !strings.HasPrefix(challenge, "Negotiate ") {
++			return conn, fmt.Errorf("invalid NTLM proxy challenge")
++		}
++		message, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(challenge, "Negotiate "))
++		if err != nil {
++			return conn, err
++		}
++		message, err = ntlmssp.NewAuthenticateMessage(message, auth.Username, auth.Passwd, nil)
++		if err != nil {
++			return conn, err
++		}
++		request.Header.Set("Proxy-Authorization", "Negotiate "+base64.StdEncoding.EncodeToString(message))
++		if err := request.Write(conn); err != nil {
++			return conn, err
++		}
++		response, err = http.ReadResponse(reader, request)
++		if err != nil {
++			return conn, err
++		}
++	}
++	response.Body.Close()
++	if response.StatusCode != http.StatusOK {
++		return conn, fmt.Errorf("proxy CONNECT rejected: status %d", response.StatusCode)
++	}
++	// CONNECT 回應可能與第一批資料合併，不能丟棄讀取器已緩衝的資料。
++	if reader.Buffered() != 0 {
++		return &androidBufferedConn{Conn: conn, reader: reader}, nil
++	}
++	return conn, nil
++}
++
++type androidBufferedConn struct {
++	net.Conn
++	reader *bufio.Reader
++}
++
++func (c *androidBufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+diff --git a/client/android_connector_test.go b/client/android_connector_test.go
+new file mode 100644
+index 0000000..8ff4849
+--- /dev/null
++++ b/client/android_connector_test.go
+@@ -0,0 +1,126 @@
++package client
 +
 +import (
++	"bufio"
++	"context"
 +	"fmt"
-+	"os"
-+	"strconv"
++	"io"
++	"net"
++	"net/http"
++	"strings"
++	"testing"
++	"time"
 +
 +	v1 "github.com/fatedier/frp/pkg/config/v1"
++	netpkg "github.com/fatedier/frp/pkg/util/net"
++	libnet "github.com/fatedier/golib/net"
 +)
 +
-+func applyAndroidRuntimeConfig(cfg *v1.ClientCommonConfig) error {
-+	portText := os.Getenv("XRAYDROID_FRP_ADMIN_PORT")
-+	if portText == "" {
-+		return nil
++func TestAndroidHTTPProxyPreservesBufferedTunnelData(t *testing.T) {
++	for _, status := range []int{http.StatusOK, http.StatusForbidden} {
++		t.Run(fmt.Sprint(status), func(t *testing.T) {
++			client, server := net.Pipe()
++			defer client.Close()
++			defer server.Close()
++			_ = client.SetDeadline(time.Now().Add(3 * time.Second))
++			_ = server.SetDeadline(time.Now().Add(3 * time.Second))
++			done := make(chan error, 1)
++			go func() {
++				req, err := http.ReadRequest(bufio.NewReader(server))
++				if err != nil {
++					done <- err
++					return
++				}
++				if req.Method != "CONNECT" || req.Host != "example.test:7000" || req.Header.Get("Proxy-Authorization") != "Basic Zml4dHVyZTpzZWNyZXQ=" {
++					done <- fmt.Errorf("unexpected CONNECT request")
++					return
++				}
++				_, err = fmt.Fprintf(server, "HTTP/1.1 %d %s\r\nContent-Length: 0\r\n\r\npayload", status, http.StatusText(status))
++				done <- err
++			}()
++			conn, err := androidProxyConnect(context.Background(), client, "example.test:7000", "127.0.0.1:7000", "http", &libnet.ProxyAuth{Username: "fixture", Passwd: "secret"})
++			if status != http.StatusOK {
++				if err == nil {
++					t.Fatal("proxy rejection ignored")
++				}
++				return
++			}
++			if err != nil {
++				t.Fatal(err)
++			}
++			buf := make([]byte, len("payload"))
++			if _, err := io.ReadFull(conn, buf); err != nil {
++				t.Fatal(err)
++			}
++			if string(buf) != "payload" {
++				t.Fatalf("tunnel data lost: %q", buf)
++			}
++			if err := <-done; err != nil {
++				t.Fatal(err)
++			}
++		})
 +	}
-+	port, err := strconv.Atoi(portText)
-+	user := os.Getenv("XRAYDROID_FRP_ADMIN_USER")
-+	password := os.Getenv("XRAYDROID_FRP_ADMIN_PASSWORD")
-+	if err != nil || port < 1 || port > 65535 || user == "" || password == "" {
-+		return fmt.Errorf("invalid Android frpc admin settings")
-+	}
-+	// App 管理狀態 API 與程序重連；完整代理、訪客與傳輸設定保持原樣。
-+	cfg.WebServer = v1.WebServerConfig{Addr: "127.0.0.1", Port: port, User: user, Password: password}
-+	cfg.Log.To = "/dev/null"
-+	cfg.Log.Level = "error"
-+	reconnect := false
-+	cfg.LoginFailExit = &reconnect
-+	return nil
 +}
-diff --git a/cmd/frpc/sub/runtime_other.go b/cmd/frpc/sub/runtime_other.go
-new file mode 100644
-index 0000000..3cc6935
---- /dev/null
-+++ b/cmd/frpc/sub/runtime_other.go
-@@ -0,0 +1,9 @@
-+//go:build !android
 +
-+package sub
-+
-+import v1 "github.com/fatedier/frp/pkg/config/v1"
-+
-+func applyAndroidRuntimeConfig(_ *v1.ClientCommonConfig) error {
-+	return nil
++func TestAndroidConnectorTCPAndKCPRoundTrip(t *testing.T) {
++	for _, protocol := range []string{"tcp", "kcp"} {
++		t.Run(protocol, func(t *testing.T) {
++			var listener net.Listener
++			var err error
++			if protocol == "tcp" {
++				listener, err = net.Listen("tcp", "127.0.0.1:0")
++			} else {
++				listener, err = netpkg.ListenKcp("127.0.0.1:0")
++			}
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer listener.Close()
++			done := make(chan error, 1)
++			finished := make(chan struct{})
++			defer close(finished)
++			go func() {
++				conn, err := listener.Accept()
++				if err != nil {
++					done <- err
++					return
++				}
++				defer conn.Close()
++				_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
++				payload := make([]byte, 4)
++				if _, err := io.ReadFull(conn, payload); err != nil {
++					done <- err
++					return
++				}
++				_, err = conn.Write(payload)
++				done <- err
++				<-finished
++			}()
++			host, port, _ := net.SplitHostPort(listener.Addr().String())
++			cfg := &v1.ClientCommonConfig{ServerAddr: host}
++			fmt.Sscan(port, &cfg.ServerPort)
++			cfg.Transport.Protocol = protocol
++			cfg.Transport.DialServerTimeout = 3
++			connector := &defaultConnectorImpl{ctx: context.Background(), cfg: cfg}
++			conn, err := connector.androidConnect(nil)
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer conn.Close()
++			_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
++			if _, err := io.Copy(conn, strings.NewReader("ping")); err != nil {
++				t.Fatal(err)
++			}
++			payload := make([]byte, 4)
++			if _, err := io.ReadFull(conn, payload); err != nil {
++				t.Fatal(err)
++			}
++			if string(payload) != "ping" {
++				t.Fatalf("unexpected echo %q", payload)
++			}
++			if err := <-done; err != nil {
++				t.Fatal(err)
++			}
++		})
++	}
 +}
 diff --git a/client/app_status.go b/client/app_status.go
 new file mode 100644
@@ -476,5 +1290,496 @@ index 0000000..8974afe
 +	svr.completeConnectionAttempt()
 +	if got := svr.currentConnectionStatus(); got.State != "connected" || got.Error != "" {
 +		t.Fatalf("failure survived recovery: %+v", got)
++	}
++}
+diff --git a/cmd/frpc/main_android.go b/cmd/frpc/main_android.go
+new file mode 100644
+index 0000000..53977d9
+--- /dev/null
++++ b/cmd/frpc/main_android.go
+@@ -0,0 +1,35 @@
++//go:build android
++
++package main
++
++import (
++	"fmt"
++	"os"
++	"syscall"
++	"time"
++
++	"github.com/fatedier/frp/pkg/util/androidnet"
++)
++
++func init() {
++	// 版本查詢也執行原生綁定，供 App 啟動前預檢。
++	if err := androidnet.Initialize(); err != nil {
++		fmt.Fprintln(os.Stderr, err)
++		os.Exit(78)
++	}
++	// 獨立 session 的程序群組 ID 等於 frpc PID，讓 App 可清理驗證命令的子程序。
++	if _, err := syscall.Setsid(); err != nil {
++		os.Exit(1)
++	}
++	parentPID := os.Getppid()
++	go func() {
++		for {
++			time.Sleep(250 * time.Millisecond)
++			// Go goroutine 可能切換執行緒，改以程序父 PID 避免綁定 thread 的死亡訊號。
++			if parentPID <= 1 || os.Getppid() != parentPID {
++				_ = syscall.Kill(-os.Getpid(), syscall.SIGKILL)
++				os.Exit(1)
++			}
++		}
++	}()
++}
+diff --git a/cmd/frpc/sub/runtime_android.go b/cmd/frpc/sub/runtime_android.go
+new file mode 100644
+index 0000000..861746f
+--- /dev/null
++++ b/cmd/frpc/sub/runtime_android.go
+@@ -0,0 +1,31 @@
++//go:build android
++
++package sub
++
++import (
++	"fmt"
++	"os"
++	"strconv"
++
++	v1 "github.com/fatedier/frp/pkg/config/v1"
++)
++
++func applyAndroidRuntimeConfig(cfg *v1.ClientCommonConfig) error {
++	portText := os.Getenv("XRAYDROID_FRP_ADMIN_PORT")
++	if portText == "" {
++		return nil
++	}
++	port, err := strconv.Atoi(portText)
++	user := os.Getenv("XRAYDROID_FRP_ADMIN_USER")
++	password := os.Getenv("XRAYDROID_FRP_ADMIN_PASSWORD")
++	if err != nil || port < 1 || port > 65535 || user == "" || password == "" {
++		return fmt.Errorf("invalid Android frpc admin settings")
++	}
++	// App 管理狀態 API 與程序重連；完整代理、訪客與傳輸設定保持原樣。
++	cfg.WebServer = v1.WebServerConfig{Addr: "127.0.0.1", Port: port, User: user, Password: password}
++	cfg.Log.To = "/dev/null"
++	cfg.Log.Level = "error"
++	reconnect := false
++	cfg.LoginFailExit = &reconnect
++	return nil
++}
+diff --git a/cmd/frpc/sub/runtime_other.go b/cmd/frpc/sub/runtime_other.go
+new file mode 100644
+index 0000000..3cc6935
+--- /dev/null
++++ b/cmd/frpc/sub/runtime_other.go
+@@ -0,0 +1,9 @@
++//go:build !android
++
++package sub
++
++import v1 "github.com/fatedier/frp/pkg/config/v1"
++
++func applyAndroidRuntimeConfig(_ *v1.ClientCommonConfig) error {
++	return nil
++}
+diff --git a/pkg/util/androidnet/network.go b/pkg/util/androidnet/network.go
+new file mode 100644
+index 0000000..d5fdfb0
+--- /dev/null
++++ b/pkg/util/androidnet/network.go
+@@ -0,0 +1,151 @@
++package androidnet
++
++import (
++	"context"
++	"fmt"
++	"net"
++	"net/http"
++	"strconv"
++	"strings"
++	"syscall"
++)
++
++const HandleEnvironment = "XRAYDROID_FRP_NETWORK_HANDLE"
++
++var networkHandle uint64
++
++func parseHandle(value string) (uint64, error) {
++	if value == "" {
++		return 0, nil
++	}
++	handle, err := strconv.ParseUint(value, 10, 64)
++	if err != nil {
++		return 0, fmt.Errorf("invalid %s: %w", HandleEnvironment, err)
++	}
++	return handle, nil
++}
++
++func initialize(value string, bind func(uint64) error) (uint64, error) {
++	handle, err := parseHandle(value)
++	if err != nil {
++		return 0, err
++	}
++	if handle != 0 {
++		if err := bind(handle); err != nil {
++			return 0, err
++		}
++	}
++	return handle, nil
++}
++
++func Selected() bool { return networkHandle != 0 }
++
++type controlFunc = func(string, string, syscall.RawConn) error
++
++// 先保留既有通訊端選項；本機回送與入站監聽明確解除程序網路綁定。
++func socketControl(handle uint64, inbound bool, previous controlFunc, bind func(uint64, int) error) controlFunc {
++	if handle == 0 {
++		return previous
++	}
++	return func(network, address string, raw syscall.RawConn) error {
++		if previous != nil {
++			if err := previous(network, address, raw); err != nil {
++				return err
++			}
++		}
++		if strings.HasPrefix(network, "unix") {
++			return nil
++		}
++		target := handle
++		host, _, err := net.SplitHostPort(address)
++		if err == nil {
++			if i := strings.LastIndexByte(host, '%'); i >= 0 {
++				host = host[:i]
++			}
++			if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
++				target = 0
++			}
++		}
++		if inbound {
++			target = 0
++		}
++		var bindErr error
++		if err := raw.Control(func(fd uintptr) { bindErr = bind(target, int(fd)) }); err != nil {
++			return err
++		}
++		return bindErr
++	}
++}
++
++func Control(previous controlFunc) controlFunc {
++	return socketControl(networkHandle, false, previous, bindSocket)
++}
++func InboundControl(previous controlFunc) controlFunc {
++	return socketControl(networkHandle, true, previous, bindSocket)
++}
++
++func DialContext(ctx context.Context, network, address string) (net.Conn, error) {
++	d := net.Dialer{Control: Control(nil)}
++	return d.DialContext(ctx, network, address)
++}
++
++func Listen(network, address string) (net.Listener, error) {
++	lc := net.ListenConfig{Control: InboundControl(nil)}
++	return lc.Listen(context.Background(), network, address)
++}
++
++// 入站與 NAT 穿透分開處理；後者必須使用指定網路。
++func ListenUDP(network string, address *net.UDPAddr, inbound bool) (*net.UDPConn, error) {
++	if !Selected() {
++		return net.ListenUDP(network, address)
++	}
++	text := ":0"
++	if address != nil {
++		text = address.String()
++	}
++	lc := net.ListenConfig{Control: socketControl(networkHandle, inbound, nil, bindSocket)}
++	c, err := lc.ListenPacket(context.Background(), network, text)
++	if err != nil {
++		return nil, err
++	}
++	return c.(*net.UDPConn), nil
++}
++
++func DialUDP(network string, local, remote *net.UDPAddr) (*net.UDPConn, error) {
++	if !Selected() {
++		return net.DialUDP(network, local, remote)
++	}
++	d := net.Dialer{Control: Control(nil)}
++	if local != nil {
++		d.LocalAddr = local
++	}
++	c, err := d.Dial(network, remote.String())
++	if err != nil {
++		return nil, err
++	}
++	return c.(*net.UDPConn), nil
++}
++
++func ListenUDPForRemote(network string, remote *net.UDPAddr) (*net.UDPConn, error) {
++	control := Control(nil)
++	lc := net.ListenConfig{}
++	if control != nil {
++		lc.Control = func(network, _ string, raw syscall.RawConn) error { return control(network, remote.String(), raw) }
++	}
++	address := "0.0.0.0:0"
++	if remote.IP.To4() == nil {
++		address = "[::]:0"
++	}
++	conn, err := lc.ListenPacket(context.Background(), network, address)
++	if err != nil {
++		return nil, err
++	}
++	return conn.(*net.UDPConn), nil
++}
++
++func ConfigureHTTPTransport(transport *http.Transport) {
++	if Selected() {
++		d := net.Dialer{Control: Control(nil)}
++		transport.DialContext = d.DialContext
++	}
++}
+diff --git a/pkg/util/androidnet/network_android.go b/pkg/util/androidnet/network_android.go
+new file mode 100644
+index 0000000..c48acb8
+--- /dev/null
++++ b/pkg/util/androidnet/network_android.go
+@@ -0,0 +1,62 @@
++//go:build android && cgo
++
++package androidnet
++
++/*
++#cgo LDFLAGS: -landroid
++#include <android/multinetwork.h>
++#include <errno.h>
++#include <stdint.h>
++#include <sys/socket.h>
++#include <unistd.h>
++
++static int frpc_bind_process(uint64_t handle) {
++    int fd = socket(AF_INET, SOCK_DGRAM, 0);
++    if (fd < 0) return errno;
++    int result = android_setsocknetwork((net_handle_t)handle, fd);
++    int error = result == 0 ? 0 : errno;
++    close(fd);
++    if (error != 0) return error;
++    return android_setprocnetwork((net_handle_t)handle) == 0 ? 0 : errno;
++}
++static int frpc_bind_socket(uint64_t handle, int fd) {
++    return android_setsocknetwork((net_handle_t)handle, fd) == 0 ? 0 : errno;
++}
++*/
++import "C"
++
++import (
++	"fmt"
++	"net"
++	"net/http"
++	"os"
++	"syscall"
++)
++
++func Initialize() error {
++	handle, err := initialize(os.Getenv(HandleEnvironment), func(handle uint64) error {
++		if code := C.frpc_bind_process(C.uint64_t(handle)); code != 0 {
++			return fmt.Errorf("cannot bind Android network: %w", syscall.Errno(code))
++		}
++		return nil
++	})
++	if err != nil {
++		return err
++	}
++	networkHandle = handle
++	if Selected() {
++		// Android 的 libc 解析器使用程序所綁定網路，不能改走公共 DNS。
++		net.DefaultResolver = &net.Resolver{PreferGo: false}
++		transport := http.DefaultTransport.(*http.Transport).Clone()
++		ConfigureHTTPTransport(transport)
++		http.DefaultTransport = transport
++	}
++	return nil
++}
++
++func bindSocket(handle uint64, fd int) error {
++	if code := C.frpc_bind_socket(C.uint64_t(handle), C.int(fd)); code != 0 {
++		return fmt.Errorf("cannot bind Android socket: %w", syscall.Errno(code))
++	}
++	return nil
++}
+diff --git a/pkg/util/androidnet/network_other.go b/pkg/util/androidnet/network_other.go
+new file mode 100644
+index 0000000..637c9a9
+--- /dev/null
++++ b/pkg/util/androidnet/network_other.go
+@@ -0,0 +1,21 @@
++//go:build !android || !cgo
++
++package androidnet
++
++import (
++	"fmt"
++	"os"
++	"runtime"
++)
++
++func Initialize() error {
++	if runtime.GOOS != "android" {
++		return nil
++	}
++	_, err := initialize(os.Getenv(HandleEnvironment), func(uint64) error {
++		return fmt.Errorf("selected Android network requires cgo")
++	})
++	return err
++}
++
++func bindSocket(uint64, int) error { return fmt.Errorf("Android socket binding unavailable") }
+diff --git a/pkg/util/androidnet/network_test.go b/pkg/util/androidnet/network_test.go
+new file mode 100644
+index 0000000..6678a94
+--- /dev/null
++++ b/pkg/util/androidnet/network_test.go
+@@ -0,0 +1,140 @@
++package androidnet
++
++import (
++	"errors"
++	"net"
++	"syscall"
++	"testing"
++)
++
++func TestInitializeFailsClosed(t *testing.T) {
++	for _, value := range []string{"-1", "abc", " 0", "+1", "1.0", "18446744073709551616"} {
++		t.Run(value, func(t *testing.T) {
++			handle, err := initialize(value, func(uint64) error { t.Fatal("invalid handle reached binder"); return nil })
++			if err == nil || handle != 0 {
++				t.Fatalf("invalid selection accepted: %d, %v", handle, err)
++			}
++		})
++	}
++	for _, value := range []string{"", "0"} {
++		handle, err := initialize(value, func(uint64) error { t.Fatal("system default reached binder"); return nil })
++		if err != nil || handle != 0 {
++			t.Fatalf("system default rejected: %d, %v", handle, err)
++		}
++	}
++	const selected = uint64(644245094401)
++	got, err := initialize("644245094401", func(handle uint64) error {
++		if handle != selected {
++			t.Fatalf("handle truncated: %d", handle)
++		}
++		return nil
++	})
++	if err != nil || got != selected {
++		t.Fatalf("valid selection failed: %d, %v", got, err)
++	}
++	got, err = initialize("644245094401", func(uint64) error { return syscall.EPERM })
++	if got != 0 || !errors.Is(err, syscall.EPERM) {
++		t.Fatalf("binding failure ignored: %d, %v", got, err)
++	}
++}
++
++type rawConn struct {
++	err   error
++	calls int
++}
++
++func (r *rawConn) Control(fn func(uintptr)) error {
++	r.calls++
++	if r.err != nil {
++		return r.err
++	}
++	fn(42)
++	return nil
++}
++func (*rawConn) Read(func(uintptr) bool) error  { panic("unexpected read") }
++func (*rawConn) Write(func(uintptr) bool) error { panic("unexpected write") }
++
++func TestSocketControlKeepsLoopbackAndInboundLocal(t *testing.T) {
++	for _, tc := range []struct {
++		network, address string
++		inbound          bool
++		want             uint64
++		calls            int
++	}{
++		{"tcp4", "203.0.113.1:7000", false, 123, 1},
++		{"udp4", "192.168.1.2:7000", false, 123, 1},
++		{"tcp6", "[2001:db8::1]:7000", false, 123, 1},
++		{"tcp4", "127.0.0.1:7000", false, 0, 1},
++		{"udp4", "127.1.2.3:7000", false, 0, 1},
++		{"tcp6", "[::1]:7000", false, 0, 1},
++		{"tcp6", "[::ffff:127.0.0.1]:7000", false, 0, 1},
++		{"tcp6", "[::1%lo]:7000", false, 0, 1},
++		{"tcp", "0.0.0.0:2053", true, 0, 1},
++		{"udp6", "[::]:7000", true, 0, 1},
++		{"unix", "/tmp/frpc.sock", false, 0, 0},
++	} {
++		t.Run(tc.network+tc.address, func(t *testing.T) {
++			previous := false
++			raw := &rawConn{}
++			control := socketControl(123, tc.inbound, func(string, string, syscall.RawConn) error { previous = true; return nil }, func(handle uint64, fd int) error {
++				if !previous {
++					t.Fatal("previous options skipped")
++				}
++				if handle != tc.want || fd != 42 {
++					t.Fatalf("binding = %d/%d, want %d/42", handle, fd, tc.want)
++				}
++				return nil
++			})
++			if err := control(tc.network, tc.address, raw); err != nil {
++				t.Fatal(err)
++			}
++			if !previous || raw.calls != tc.calls {
++				t.Fatalf("control calls = %d, want %d", raw.calls, tc.calls)
++			}
++		})
++	}
++}
++
++func TestSocketControlPropagatesEveryFailure(t *testing.T) {
++	for _, stage := range []string{"previous", "raw", "binding", "loopback"} {
++		t.Run(stage, func(t *testing.T) {
++			raw := &rawConn{}
++			if stage == "raw" {
++				raw.err = syscall.EBADF
++			}
++			control := socketControl(123, false, func(string, string, syscall.RawConn) error {
++				if stage == "previous" {
++					return syscall.EBADF
++				}
++				return nil
++			}, func(uint64, int) error { return syscall.EBADF })
++			address := "203.0.113.1:7000"
++			if stage == "loopback" {
++				address = "127.0.0.1:7000"
++			}
++			if err := control("tcp", address, raw); !errors.Is(err, syscall.EBADF) {
++				t.Fatalf("failure ignored: %v", err)
++			}
++			if stage == "previous" && raw.calls != 0 {
++				t.Fatal("bound after previous error")
++			}
++		})
++	}
++}
++
++func TestFailedBindingPreventsTCPAndUDPDial(t *testing.T) {
++	for _, network := range []string{"tcp4", "udp4"} {
++		t.Run(network, func(t *testing.T) {
++			calls := 0
++			d := net.Dialer{Control: socketControl(123, false, nil, func(uint64, int) error { calls++; return syscall.EPERM })}
++			conn, err := d.Dial(network, "127.0.0.1:9")
++			if conn != nil {
++				conn.Close()
++				t.Fatal("connection opened after failed binding")
++			}
++			if !errors.Is(err, syscall.EPERM) || calls == 0 {
++				t.Fatalf("binding failure lost: %v, calls %d", err, calls)
++			}
++		})
 +	}
 +}
