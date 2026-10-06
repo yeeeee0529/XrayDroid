@@ -65,7 +65,8 @@ class SettingsNavigationTest {
             instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
         )
         awaitText("出站網路")
-        assertTrue("frpc editor must disappear after leaving its subpage", matchingNodes("配置模式").isEmpty())
+        // 返回轉場期間上一個畫面仍在階層中，需等待其實際消失。
+        awaitGone("配置模式")
         clickText("返回首頁")
         awaitText("XrayDroid")
         awaitText("管理面板")
@@ -120,11 +121,25 @@ class SettingsNavigationTest {
                         event(MotionEvent.ACTION_UP, SystemClock.uptimeMillis(), end)
                     }
                 }
+                // 放開後的慣性滑動會快速掃過目標；動畫期間必須持續偵測，否則會整段跳過。
+                repeat(40) {
+                    if (matchingNodes(text).isNotEmpty()) return
+                    SystemClock.sleep(16)
+                }
                 instrumentation.waitForIdleSync()
                 SystemClock.sleep(100)
             }
         }
         throw AssertionError("Expected scrollable navigation label: $text")
+    }
+
+    private fun awaitGone(text: String) {
+        val deadline = SystemClock.elapsedRealtime() + 2000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (matchingNodes(text).isEmpty()) return
+            SystemClock.sleep(50)
+        }
+        throw AssertionError("Expected navigation label to disappear: $text")
     }
 
     private fun awaitText(text: String) {

@@ -26,6 +26,13 @@
 - 使用者明確要求停止繼續測試並直接 commit／push；不再執行完整 suite，不宣稱最後完整 suite 全數通過。此前各項失敗修正後的相關測試均已有實際通過結果。測試 fixture 與本輪 adb reverse 17000／18080 已清理，喚醒設定還原為原值 0；WireGuard 由使用者自行開回。
 - 未再產生正式 application ID 的 APK 或安裝至正式套件；目前工作包含已驗證的隔離 APK 與程式／文件修改。新功能的其他 Android／OEM、行動網路及非回送 frps 的指定介面傳輸仍未逐項驗證；外部權杖指令另外執行的程序不保證繼承 frpc 的網路綁定。
 - 已比對手機正式 APK 與本機新 APK 的公開簽章：不同。未解除安裝或覆蓋正式套件；若要保留原資料更新，需原簽署金鑰。沒有讀取私有設定或私鑰。
+- 使用者要求以真機 instrumentation 驗證 frp 網路選擇。首輪完整 suite 失敗於 `FrpNetworkSelectionTest.nativeVersionProbeRejectsInvalidHandle`：`patches/frp-android.patch` 已於本節改寫（+1366 行），但 `jniLibs` 的 `libfrpc.so` 仍是 10 月 2 日建置的舊版；舊版接受 `Long.MAX_VALUE` 並回傳 0，新版回報 `cannot bind Android network: invalid argument`（exit 78）。將 `upstream/frp` 還原至釘選 commit `4a23aa1` 後重跑 `scripts/build-frpc.sh` 完成重建；還原只涉及被忽略的建置工作區，`patches/` 內容未變更。
+- 以換回舊核心的控制實驗確認 `SettingsNavigationTest` 的失敗與核心重建無關：該測試單獨執行時新舊核心皆失敗。修正該測試兩個缺陷：（1）`scrollToText` 注入的滑動經診斷確認會一次把清單由頂端慣性甩到底部，而檢查僅發生於滑動之間，目標標籤整段遭跳過；手動以 `adb shell input swipe` 採同距離與時間只前進約 1.5 個畫面且目標可見，確認產品捲動正常，改為放開後於慣性期間持續偵測。（2）返回子頁後立即斷言編輯器消失，實際是轉場期間上一畫面仍在無障礙階層中；手動以 `GLOBAL_ACTION_BACK` 驗證產品行為正確，改為有界等待 `awaitGone`。
+- 修正後完整裝置 suite：XML 紀錄 40 項，39 通過、1 行動網路略過、0 失敗。`FrpNetworkSelectionTest` 8 項全部通過，含啟用 fixture 的 `selectedWifiNativeClientPreservesLoopbackTcpAndUdpForwarding`；`SettingsNavigationTest` 與 `NetworkBindingTest` 亦通過。`cellularCoreUsesSelectedNetworkForTcpAndUdp` 因裝置僅有 Wi-Fi，依假設略過。
+- `:app:ktlintCheck`、`:app:testDebugUnitTest`（25 項、0 失敗）、`:app:assembleRelease` 通過。Go 端 `gofmt`、`go vet`、`androidnet`／`client` 套件測試，以及上游 `make gotest` 範圍（`assets`／`cmd`／`client`／`server`／`pkg`）全部通過；補齊 `bin/frpc`／`bin/frps` 後 `test/e2e` 通過。`test/e2e/compatibility` 需 `hack/run-e2e-compatibility.sh` 與 baseline 執行檔，以 `go test ./...` 直接執行必然失敗，不計為通過。
+- 以重建後的核心重新產生 `app-release.apk`，確認 APK 內 `lib/arm64-v8a/libfrpc.so` 與 `jniLibs` 的 SHA-256 一致後，以 `adb install -r` 更新正式套件；`firstInstallTime` 維持 10 月 2 日不變，使用者資料保留。本輪較早一次安裝使用的是過期核心的 APK，已由本次覆蓋。
+- 驗證用 fixture、`adb reverse` 17000／18080 與裝置暫存檔已清理；隔離 validation 套件由 Gradle 於測試結束時移除。
+- 本輪未驗證：行動網路傳輸（裝置無行動網路）、拔線或無線電中斷後的自動恢復、以及非回送 frps 的指定介面傳輸。
 
 ## release build 類型（2026-10-05）
 
