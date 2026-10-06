@@ -2,6 +2,16 @@
 
 日期：2026-10-06。
 
+## 0.2.0 發布（2026-10-06）
+
+- 版本更新：`app/build.gradle.kts` 的 `versionCode` 由 1 改為 2、`versionName` 由 `0.1.0` 改為 `0.2.0`；`CHANGELOG.md` 的「尚未發布」段落改為 `0.2.0 — 2026-10-06`。
+- 未重建原生核心：`patches/frp-android.patch` 最後修改時間為 10 月 6 日 10:12，`jniLibs/arm64-v8a/libfrpc.so` 為同日 10:31 產出，晚於修補；`libxui.so`／`libxray.so` 分別對應 10 月 2 日與 10 月 1 日的修補，故直接沿用既有核心。
+- 驗證結果：`./gradlew :app:ktlintFormat :app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleRelease` 全部通過（JDK 17）。JVM 測試 XML 紀錄 25 項、0 failures／0 errors／0 skipped；Android lint 為 0 errors／0 warnings，保留 2 個既有 hints。
+- 產物檢查：`app-release.apk` 為 58,477,307 bytes，SHA-256 `9197178514031321d69ebebfee092bbc686ba59f4db7169ae076ff9f11655002`；`aapt2 dump badging` 確認 `versionCode='2'`、`versionName='0.2.0'`、`minSdkVersion:'26'`、`targetSdkVersion:'36'`。`apksigner verify` 通過 v2 scheme，簽署者為 `CN=Android Debug`（SHA-256 `786bbe3dc5b303242dbfcaa18912cdc6bd576892bfc2301aa200d3f0356d8ce0`），與 v0.1.0 相同金鑰，可直接覆蓋安裝。
+- APK 內 `lib/arm64-v8a` 三個原生程式庫的 SHA-256 與 `app/src/main/jniLibs/arm64-v8a` 逐一相符；`assets/core/geoip.dat` 與 `geosite.dat` 均存在。
+- 以 `gh release create v0.2.0 --prerelease` 發布，附帶 `app-release.apk`。
+- 本輪未驗證：新版 APK 未安裝至實機；裝置端行為沿用上一節的隔離套件測試結果，行動網路、拔線恢復與非回送 frps 仍屬未涵蓋範圍。
+
 ## frp 獨立網路介面選擇（2026-10-06）
 
 - frp 頁新增與 Xray 共用的網路介面選擇 UI 與偵測邏輯；`FrpNetworkStore` 使用獨立 `frp_network` 偏好設定，預設跟隨系統。只保存模式與介面名稱，不保存 Android Network handle；綁定失敗與行動網路請求亦各自獨立。

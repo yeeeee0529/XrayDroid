@@ -13,8 +13,8 @@ android {
         applicationId = providers.gradleProperty("validationApplicationId").getOrElse("io.github.xraydroid")
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         ndk { abiFilters += "arm64-v8a" }
         buildConfigField("String", "XUI_VERSION", "\"3.8.5\"")
         buildConfigField("String", "XRAY_VERSION", "\"26.6.27\"")
