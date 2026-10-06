@@ -10,7 +10,9 @@
 - 產物檢查：`app-release.apk` 為 58,477,307 bytes，SHA-256 `9197178514031321d69ebebfee092bbc686ba59f4db7169ae076ff9f11655002`；`aapt2 dump badging` 確認 `versionCode='2'`、`versionName='0.2.0'`、`minSdkVersion:'26'`、`targetSdkVersion:'36'`。`apksigner verify` 通過 v2 scheme，簽署者為 `CN=Android Debug`（SHA-256 `786bbe3dc5b303242dbfcaa18912cdc6bd576892bfc2301aa200d3f0356d8ce0`），與 v0.1.0 相同金鑰，可直接覆蓋安裝。
 - APK 內 `lib/arm64-v8a` 三個原生程式庫的 SHA-256 與 `app/src/main/jniLibs/arm64-v8a` 逐一相符；`assets/core/geoip.dat` 與 `geosite.dat` 均存在。
 - 以 `gh release create v0.2.0 --prerelease` 發布，附帶 `app-release.apk`。
-- 本輪未驗證：新版 APK 未安裝至實機；裝置端行為沿用上一節的隔離套件測試結果，行動網路、拔線恢復與非回送 frps 仍屬未涵蓋範圍。
+- 正式套件安裝：以 `adb install -r app-release.apk` 覆蓋 Pixel 9 Pro XL（`komodo`／arm64／Android 17）上的既有版本。安裝前後 `dumpsys package` 顯示 `versionCode` 由 1 變為 2、`versionName` 由 `0.1.0` 變為 `0.2.0`，`firstInstallTime` 維持 2026-10-02 10:06:20 不變，使用者資料保留。安裝前確認 `dumpsys activity services io.github.xraydroid` 為空，服務未執行，未中止進行中的核心。
+- 安裝後原生程式庫實際落地於 `/data/app/.../lib/arm64`，`libfrpc.so`／`libxray.so`／`libxui.so` 大小 17,414,648／34,907,672／75,154,656 與 `jniLibs` 相符。以 Launcher intent 啟動 `MainActivity` 後程序存活、`topResumedActivity` 為 `.MainActivity`、crash buffer 無紀錄，首頁正常顯示繁中字串、面板位址、3x-ui 3.8.5 與 Xray-core 26.6.27。
+- 本輪未驗證：未在裝置上實際啟動服務或執行 frp／出站網路功能，裝置端功能行為沿用上一節的隔離套件測試結果；行動網路、拔線恢復與非回送 frps 仍屬未涵蓋範圍。
 
 ## frp 獨立網路介面選擇（2026-10-06）
 
