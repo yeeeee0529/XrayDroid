@@ -335,4 +335,14 @@
     <string name="frp_form_field_health_check_headers">HTTP 健康检查标头</string>
     <string name="frp_form_field_metadata">代理元数据</string>
     <string name="frp_form_field_annotations">代理注解</string>
+    <string name="frp_instance_default_name">默认实例</string>
+    <string name="frp_instance_add">新增服务器</string>
+    <string name="frp_instance_name">实例名称</string>
+    <string name="frp_instance_rename">重命名</string>
+    <string name="frp_instance_create">新增</string>
+    <string name="frp_instance_save_name">保存名称</string>
+    <string name="frp_instance_cancel">取消</string>
+    <string name="frp_instances_back">返回服务器列表</string>
+    <string name="frp_instances_note">每个服务器实例可同时连接，配置、转发规则、网络接口与启停各自独立。</string>
+    <string name="frp_instance_save_failed">无法保存实例名称，请稍后重试。</string>
 </resources>

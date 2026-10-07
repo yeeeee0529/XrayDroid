@@ -18,6 +18,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.xraydroid.R
 import io.github.xraydroid.ui.FrpScreen
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -94,11 +95,12 @@ class FrpAsyncEditorTest {
         enabledText("表單配置")
         enabledText("▸ 基本設定").performClick()
         enabledText("伺服器位址").performTextReplacement("unsaved.example.invalid")
-        scrollToText("返回設定").performClick()
+        val backLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.frp_instances_back)
+        scrollToText(backLabel).performClick()
         compose.onNodeWithText("捨棄未儲存的草稿？").assertIsDisplayed()
         compose.runOnIdle { assertEquals(0, departures) }
         compose.onNodeWithText("繼續編輯").performClick()
-        scrollToText("返回設定").performClick()
+        scrollToText(backLabel).performClick()
         compose.onNodeWithText("捨棄並返回").performClick()
         compose.runOnIdle {
             assertEquals(1, departures)

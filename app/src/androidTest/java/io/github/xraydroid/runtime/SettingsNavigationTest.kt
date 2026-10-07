@@ -50,7 +50,10 @@ class SettingsNavigationTest {
         awaitText("frp")
         assertTrue("Network controls must disappear after returning to settings", matchingNodes("重新偵測").isEmpty())
         clickText("frp")
-        awaitText(context.getString(R.string.frp_client_title))
+        awaitText(context.getString(R.string.frp_instance_default_name))
+        assertTrue("Network controls must remain inside the instance editor", matchingNodes("重新偵測").isEmpty())
+        clickText(context.getString(R.string.frp_instance_default_name))
+        awaitText(context.getString(R.string.frp_instances_back))
         scrollToText(context.getString(R.string.frp_network_title))
         instrumentation.runOnMainSync { FrpNetworkStore.selectInterface("frp-navigation-unavailable") }
         scrollToText("跟隨系統")
@@ -61,12 +64,17 @@ class SettingsNavigationTest {
         assertTrue(NetworkStore.state.value.selectedInterfaceName == null)
         scrollToText("配置模式")
         assertTrue(
-            "System Back action must return from frp to settings",
+            "System Back action must return from the editor to the instance list",
+            instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+        )
+        awaitText(context.getString(R.string.frp_instance_default_name))
+        // 返回轉場期間上一個畫面仍在階層中，需等待其實際消失。
+        awaitGone("配置模式")
+        assertTrue(
+            "System Back action must return from the instance list to settings",
             instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
         )
         awaitText("出站網路")
-        // 返回轉場期間上一個畫面仍在階層中，需等待其實際消失。
-        awaitGone("配置模式")
         clickText("返回首頁")
         awaitText("XrayDroid")
         awaitText("管理面板")

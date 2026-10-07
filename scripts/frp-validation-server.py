@@ -13,10 +13,12 @@ import threading
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run local frps fixture for Android validation")
     parser.add_argument("--frps", type=pathlib.Path, default=pathlib.Path(".core-cache/frps"))
+    parser.add_argument("--multi-instance", action="store_true", help="Also serve a second frps on port 17001")
     args = parser.parse_args()
     executable = args.frps.resolve()
     lock = threading.Lock()
     child: subprocess.Popen | None = None
+    second_child: subprocess.Popen | None = None
     payload = b"xraydroid-frp-probe"
 
     with tempfile.TemporaryDirectory(prefix="xraydroid-frp-") as directory:
@@ -80,13 +82,30 @@ def main() -> None:
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 18080), Handler)
         try:
             start()
+            if args.multi_instance:
+                second_config = pathlib.Path(directory) / "frps-second.toml"
+                second_config.write_text('bindAddr = "127.0.0.1"\nbindPort = 17001\nlog.to = "/dev/null"\n')
+                second_child = subprocess.Popen(
+                    [str(executable), "-c", str(second_config)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
             print("FRP validation fixture ready: control=17000 probe=18080 tcp=16000 udp=16001", flush=True)
+            if args.multi_instance:
+                print("Second FRP validation server: control=17001", flush=True)
             server.serve_forever()
         except KeyboardInterrupt:
             pass
         finally:
             server.server_close()
             stop()
+            if second_child is not None:
+                second_child.terminate()
+                try:
+                    second_child.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    second_child.kill()
+                    second_child.wait(timeout=5)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ import androidx.core.content.edit
 import io.github.xraydroid.R
 import java.net.NetworkInterface
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -83,9 +84,10 @@ open class NetworkSelectionStore(private val preferencesName: String) {
     )
 
     private val handler = Handler(Looper.getMainLooper())
-    private val snapshotExecutor = Executors.newSingleThreadExecutor { task ->
+    private fun newSnapshotExecutor() = Executors.newSingleThreadExecutor { task ->
         Thread(task, "network-interface-snapshot").apply { isDaemon = true }
     }
+    private var snapshotExecutor = newSnapshotExecutor()
     private val mutableState = MutableStateFlow(NetworkState())
     val state = mutableState.asStateFlow()
     private lateinit var connectivity: ConnectivityManager
@@ -97,6 +99,8 @@ open class NetworkSelectionStore(private val preferencesName: String) {
     private var kernelInterfaces = emptyList<KernelInterface>()
     private var defaultHandle: Long? = null
     private var cellularRequest: ConnectivityManager.NetworkCallback? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var defaultNetworkCallback: ConnectivityManager.NetworkCallback? = null
     private var initialized = false
     private var selectedMode = OutboundNetworkMode.SYSTEM
     private var selectedInterfaceName: String? = null
@@ -136,12 +140,15 @@ open class NetworkSelectionStore(private val preferencesName: String) {
         check(Looper.myLooper() == Looper.getMainLooper()) { "NetworkStore must initialize on the main thread" }
         if (initialized) return
         initialized = true
+        if (snapshotExecutor.isShutdown) snapshotExecutor = newSnapshotExecutor()
         connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
         preferences = context.applicationContext.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
         selectedMode = runCatching {
             OutboundNetworkMode.valueOf(preferences.getString("mode", "SYSTEM") ?: "SYSTEM")
         }.getOrDefault(OutboundNetworkMode.SYSTEM)
         selectedInterfaceName = preferences.getString("interface_name", null)
+        val allNetworksCallback = callback()
+        networkCallback = allNetworksCallback
         connectivity.registerNetworkCallback(
             NetworkRequest.Builder()
                 .apply {
@@ -154,25 +161,49 @@ open class NetworkSelectionStore(private val preferencesName: String) {
                     addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
                 }
                 .build(),
-            callback(),
+            allNetworksCallback,
             handler
         )
-        connectivity.registerDefaultNetworkCallback(
-            object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) {
-                    defaultHandle = network.networkHandle
-                    publishAndRefresh()
-                }
+        val defaultCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (defaultNetworkCallback !== this) return
+                defaultHandle = network.networkHandle
+                publishAndRefresh()
+            }
 
-                override fun onLost(network: Network) {
-                    if (defaultHandle == network.networkHandle) defaultHandle = null
-                    publishAndRefresh()
-                }
-            },
-            handler
-        )
+            override fun onLost(network: Network) {
+                if (defaultNetworkCallback !== this) return
+                if (defaultHandle == network.networkHandle) defaultHandle = null
+                publishAndRefresh()
+            }
+        }
+        defaultNetworkCallback = defaultCallback
+        connectivity.registerDefaultNetworkCallback(defaultCallback, handler)
         updateCellularRequest()
         publishAndRefresh()
+    }
+
+    fun release() {
+        check(Looper.myLooper() == Looper.getMainLooper()) { "NetworkStore must release on the main thread" }
+        if (!initialized) return
+        initialized = false
+        snapshotGeneration++
+        handler.removeCallbacks(refreshTask)
+        snapshotExecutor.shutdown()
+        listOfNotNull(networkCallback, defaultNetworkCallback, cellularRequest).forEach {
+            runCatching { connectivity.unregisterNetworkCallback(it) }
+        }
+        networkCallback = null
+        defaultNetworkCallback = null
+        cellularRequest = null
+        requestingCellular = false
+        networks.clear()
+        capabilities.clear()
+        properties.clear()
+        bindingFailures.clear()
+        kernelInterfaces = emptyList()
+        defaultHandle = null
+        publish()
     }
 
     fun select(mode: OutboundNetworkMode) {
@@ -243,29 +274,34 @@ open class NetworkSelectionStore(private val preferencesName: String) {
     }
 
     private fun publishAndRefresh() {
+        if (!initialized) return
         requestInterfaceRefresh()
         publish()
     }
 
     private fun callback() = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            if (networkCallback !== this) return
             networks[network.networkHandle] = network
             publishAndRefresh()
         }
 
         override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+            if (networkCallback !== this) return
             networks[network.networkHandle] = network
             capabilities[network.networkHandle] = networkCapabilities
             publishAndRefresh()
         }
 
         override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+            if (networkCallback !== this) return
             networks[network.networkHandle] = network
             properties[network.networkHandle] = linkProperties
             publishAndRefresh()
         }
 
         override fun onLost(network: Network) {
+            if (networkCallback !== this) return
             val handle = network.networkHandle
             networks.remove(handle)
             capabilities.remove(handle)
@@ -457,4 +493,50 @@ open class NetworkSelectionStore(private val preferencesName: String) {
 
 object NetworkStore : NetworkSelectionStore("outbound_network")
 
-object FrpNetworkStore : NetworkSelectionStore("frp_network")
+object FrpNetworkStore : NetworkSelectionStore("frp_network") {
+    private val stores = ConcurrentHashMap<String, NetworkSelectionStore>()
+    private val references = mutableMapOf<String, Int>()
+
+    fun acquire(context: Context, id: String): NetworkSelectionStore {
+        check(Looper.myLooper() == Looper.getMainLooper()) { "FRP network store must acquire on the main thread" }
+        val store = forInstance(id)
+        if (id == FrpStore.DEFAULT_INSTANCE_ID) {
+            store.initialize(context)
+            return store
+        }
+        val count = references[id] ?: 0
+        if (count == 0) {
+            try {
+                store.initialize(context)
+            } catch (error: Exception) {
+                store.release()
+                throw error
+            }
+        }
+        references[id] = count + 1
+        return store
+    }
+
+    fun release(id: String) {
+        check(Looper.myLooper() == Looper.getMainLooper()) { "FRP network store must release on the main thread" }
+        require(FrpInstanceCatalog.isValidId(id)) { "Invalid FRP instance identifier" }
+        // 預設實例沿用整個應用程式的網路監看；其他實例由畫面與服務共同持有。
+        if (id == FrpStore.DEFAULT_INSTANCE_ID) return
+        val count = references[id] ?: return
+        if (count > 1) {
+            references[id] = count - 1
+        } else {
+            references.remove(id)
+            stores[id]?.release()
+        }
+    }
+
+    fun forInstance(id: String): NetworkSelectionStore {
+        require(FrpInstanceCatalog.isValidId(id)) { "Invalid FRP instance identifier" }
+        return if (id == FrpStore.DEFAULT_INSTANCE_ID) {
+            this
+        } else {
+            stores.getOrPut(id) { NetworkSelectionStore("frp_network_$id") }
+        }
+    }
+}

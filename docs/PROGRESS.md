@@ -1,6 +1,26 @@
 # 進度與驗證紀錄
 
-日期：2026-10-06。
+日期：2026-10-07。
+
+## frpc 多伺服器實例（2026-10-07）
+
+- frp 入口改為伺服器實例清單，支援新增與重新命名；個別編輯器保留完整表單／TOML、代理／訪客、匯入與草稿確認。每個實例的設定、支援檔案、網路偏好、外部權杖指令選項與執行狀態各自獨立，可同時連線不同 frps。
+- 預設實例保留既有 `server/frp/frpc.toml`、`support/`、`frp` 與 `frp_network` 偏好設定，不搬移或改寫舊設定；新實例使用 UUID 與 `server/frp/instances/{UUID}`。實例目錄以 AtomicFile 原子儲存，損毀時保留原檔並禁止覆寫；沒有新增刪除資料功能。
+- 單一 `FrpService` 管理每實例獨立的程序、session、啟停序列與網路監看。程序識別同時比對 App UID、執行檔及 `-c` 設定路徑；不再以執行檔路徑清理全部 frpc，驗證／版本探針亦不在清理範圍。服務銷毀後的舊工作禁止清理新服務 session、寫入待執行實例或更新通知。
+- 指定網路失效時只暫停該實例，不回退；停止的 runtime 與最後一個 UI／服務持有者釋放網路回呼。通知聚合各實例狀態，提供最多三個個別停止動作，其他實例可從清單控制。系統重建服務時僅恢復先前要求執行的實例 IDs；通知權限等待期間保存目標實例 ID。
+- 受影響檔案：`MainActivity.kt`；runtime 的 `FrpStore.kt`、`FrpInstanceCatalog.kt`、`FrpLayout.kt`、`FrpService.kt`、`NetworkStore.kt`、`OwnedProcesses.kt`；UI 的 `FrpInstancesScreen.kt`、`FrpScreen.kt`；三語系 `strings.xml`；`FrpInstanceCatalogTest.kt`、`FrpMultiInstanceTest.kt`、`FrpInstancesScreenTest.kt`、`SettingsNavigationTest.kt`、`FrpAsyncEditorTest.kt`；`scripts/frp-validation-server.py`；首頁與三語系完整 README、CHANGELOG、AGENTS 及本紀錄。
+
+### 此輪實際驗證與範圍
+
+- 依使用者要求只測修改範圍，沒有執行全專案單元／裝置 suite、其他轉發協定或 Go suite。原生核心與修補未改動，沿用此前已建置的三個核心；本輪 Gradle `verifyCore` 通過，未重建原生核心。
+- `:app:ktlintFormat`、`:app:ktlintCheck`、`:app:lintDebug` 通過；Android lint 0 errors／0 warnings，保留 2 個既有 hints。第一次把 format 與 check 放在同一次 Gradle 執行，check 在 format 前檢查到格式問題；已改為先獨立 format 再 check。兩項新增 KTX 寫法 lint 錯誤亦已修正後通過。
+- `:app:testDebugUnitTest --tests io.github.xraydroid.runtime.FrpInstanceCatalogTest`：4 項、0 failures／errors／skipped，涵蓋實例名稱／順序往返、舊目錄與偏好保留、新實例目錄隔離、非法 ID 與損毀目錄拒絕。Kotlin 主程式與裝置測試編譯通過。
+- Pixel 9 Pro XL／Android 17 使用 `io.github.xraydroid.validation` 隔離套件。首輪限定 `FrpMultiInstanceTest`、`FrpInstancesScreenTest`、`SettingsNavigationTest`、`FrpAsyncEditorTest`：7 項，6 通過、1 導覽測試失敗、0 skipped；失敗為編輯器改顯示實例名稱後，測試仍等待舊「frp 用戶端」標題，已改等待「返回伺服器清單」。服務銷毀防護與測試修正後僅補跑 `FrpMultiInstanceTest`、`SettingsNavigationTest`，2 項皆通過、0 failures／errors／skipped。以上 7 個不同案例最終均有通過結果，未宣稱完整 suite 通過。
+- 實際確認兩個 frpc 同時登入不同本機 frps、使用不同程序 session；重啟一個、指定缺失網路等待、停止及快速啟停，另一個 session 持續存在。UI 實測新增兩實例、重新命名仍保留 ID、依 ID 開啟、兩層返回與草稿保護。首次執行後發現服務銷毀與重建可能交錯的清理風險，加入 destroyed guard 與同鎖檢查後，多實例案例重跑通過。
+- frps 17000 為驗證前已存在的本機程序；本次 fixture 啟動第二個 frps 17001，透過 adb reverse 17000／17001 供裝置驗證。fixture 已停止，17001／18080 已無本次監聽程序，兩個新增 adb reverse 已移除；保留原先已存在的 frps。正式 App 測試前沒有服務執行，測試未操作正式套件設定或資料。
+- Python 測試伺服器語法與 `git diff --check` 通過；三語系 XML 各 340 筆、名稱與順序一致。
+- 未傳入 validation ID 的 `:app:assembleDebug :app:assembleRelease` 通過。release APK 的 `aapt2 dump badging` 確認套件為 `io.github.xraydroid`、versionCode 2、versionName 0.2.0；`apksigner verify` 通過。交付產物：`app/build/outputs/apk/release/app-release.apk` 與 `app/build/outputs/apk/debug/app-debug.apk`，本輪未安裝至正式套件、未新增版本標籤或 GitHub release。
+- 尚未實測：Android 自動重建服務後的多實例恢復、兩個不同實體網路同時綁定、非回送 frps 的長時間多實例傳輸，以及其他 Android／OEM。此次實際傳輸驗證聚焦 frps 登入與程序／控制隔離，未重跑各轉發協定。
 
 ## 0.2.0 發布（2026-10-06）
 

@@ -4,9 +4,12 @@ import android.content.Context
 import java.io.File
 import java.util.concurrent.TimeUnit
 
-internal class FrpLayout(context: Context) {
+internal class FrpLayout(context: Context, instanceId: String = FrpStore.DEFAULT_INSTANCE_ID) {
+    init {
+        require(FrpInstanceCatalog.isValidId(instanceId)) { "Invalid FRP instance identifier" }
+    }
     val executable = File(context.applicationInfo.nativeLibraryDir, "libfrpc.so")
-    val root = File(context.filesDir, "server/frp")
+    val root = FrpInstanceCatalog.root(context.filesDir, instanceId)
     val config = File(root, "frpc.toml")
     private val cache = context.cacheDir
 

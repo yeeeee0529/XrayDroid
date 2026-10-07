@@ -354,4 +354,14 @@
     <string name="frp_form_field_health_check_headers">HTTP health check headers</string>
     <string name="frp_form_field_metadata">Proxy metadata</string>
     <string name="frp_form_field_annotations">Proxy annotations</string>
+    <string name="frp_instance_default_name">Default instance</string>
+    <string name="frp_instance_add">Add server</string>
+    <string name="frp_instance_name">Instance name</string>
+    <string name="frp_instance_rename">Rename</string>
+    <string name="frp_instance_create">Add</string>
+    <string name="frp_instance_save_name">Save name</string>
+    <string name="frp_instance_cancel">Cancel</string>
+    <string name="frp_instances_back">Back to servers</string>
+    <string name="frp_instances_note">Server instances can connect simultaneously, with independent configuration, forwarding rules, network selection, and controls.</string>
+    <string name="frp_instance_save_failed">Unable to save the instance name. Please try again.</string>
 </resources>

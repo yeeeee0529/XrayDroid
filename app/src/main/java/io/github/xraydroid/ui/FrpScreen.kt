@@ -49,9 +49,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: () -> Unit, onRestart: () -> Unit) {
+fun FrpScreen(
+    state: FrpState,
+    onBack: () -> Unit,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onRestart: () -> Unit,
+    instanceId: String = FrpStore.DEFAULT_INSTANCE_ID,
+    instanceName: String? = null
+) {
     val context = LocalContext.current
-    val networkState by FrpNetworkStore.state.collectAsState()
+    val store = remember(instanceId) { FrpStore.forInstance(instanceId) }
+    val networkStore = remember(instanceId) { FrpNetworkStore.forInstance(instanceId) }
+    val networkState by networkStore.state.collectAsState()
     val scope = rememberCoroutineScope()
     // 設定與權杖只留在記憶體，不寫入 Activity 儲存狀態。
     var draft by remember { mutableStateOf(state.config) }
@@ -102,7 +112,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
     }
     fun saveThen(action: (() -> Unit)? = null) {
         exportDraft { text, snapshot ->
-            val saved = withContext(Dispatchers.IO) { FrpStore.saveConfig(context, text) }
+            val saved = withContext(Dispatchers.IO) { store.saveConfig(context, text) }
             feedback = context.getString(
                 if (saved) R.string.frp_feedback_saved_running else R.string.frp_feedback_save_failed
             )
@@ -174,7 +184,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
             working = true
             scope.launch {
                 try {
-                    val path = withContext(Dispatchers.IO) { FrpStore.importSupportFile(context, uri) }
+                    val path = withContext(Dispatchers.IO) { store.importSupportFile(context, uri) }
                     feedback = path?.let { context.getString(R.string.frp_feedback_support_imported, it) }
                         ?: context.getString(R.string.frp_feedback_support_failed)
                 } finally {
@@ -183,11 +193,11 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
             }
         }
     }
-    SettingsPage(R.string.frp_title, R.string.nav_back_settings, leave) {
+    SettingsPage(R.string.frp_title, R.string.frp_instances_back, leave) {
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(stringResource(R.string.frp_client_title), style = MaterialTheme.typography.titleLarge)
+                    Text(instanceName ?: stringResource(R.string.frp_client_title), style = MaterialTheme.typography.titleLarge)
                     Text(
                         when (state.phase) {
                             FrpPhase.STOPPED -> stringResource(R.string.frp_phase_stopped)
@@ -253,9 +263,9 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                 state = networkState,
                 appliedNetworkLabel = state.outboundNetworkLabel,
                 enabled = !busy && state.phase != FrpPhase.STOPPING,
-                onSelect = FrpNetworkStore::select,
-                onSelectInterface = FrpNetworkStore::selectInterface,
-                onRefresh = FrpNetworkStore::refreshInterfaces,
+                onSelect = networkStore::select,
+                onSelectInterface = networkStore::selectInterface,
+                onRefresh = networkStore::refreshInterfaces,
                 titleRes = R.string.frp_network_title,
                 descriptionRes = R.string.frp_network_description
             )
@@ -357,7 +367,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                     OutlinedButton(
                         onClick = {
                             exportDraft { text, _ ->
-                                val valid = withContext(Dispatchers.IO) { FrpStore.validateConfig(context, text) }
+                                val valid = withContext(Dispatchers.IO) { store.validateConfig(context, text) }
                                 feedback = context.getString(
                                     if (valid) R.string.frp_feedback_valid else R.string.frp_feedback_invalid
                                 )
@@ -423,7 +433,7 @@ fun FrpScreen(state: FrpState, onBack: () -> Unit, onStart: () -> Unit, onStop: 
                                 working = true
                                 scope.launch {
                                     try {
-                                        withContext(Dispatchers.IO) { FrpStore.setAllowUnsafeTokenCommand(context, enabled) }
+                                        withContext(Dispatchers.IO) { store.setAllowUnsafeTokenCommand(context, enabled) }
                                     } finally {
                                         working = false
                                     }

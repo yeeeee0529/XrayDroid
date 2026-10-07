@@ -352,4 +352,14 @@
     <string name="frp_form_field_health_check_headers">HTTP 健康檢查標頭</string>
     <string name="frp_form_field_metadata">代理中繼資料</string>
     <string name="frp_form_field_annotations">代理註記</string>
+    <string name="frp_instance_default_name">預設實例</string>
+    <string name="frp_instance_add">新增伺服器</string>
+    <string name="frp_instance_name">實例名稱</string>
+    <string name="frp_instance_rename">重新命名</string>
+    <string name="frp_instance_create">新增</string>
+    <string name="frp_instance_save_name">儲存名稱</string>
+    <string name="frp_instance_cancel">取消</string>
+    <string name="frp_instances_back">返回伺服器清單</string>
+    <string name="frp_instances_note">每個伺服器實例可同時連線，設定、轉發規則、網路介面與啟停各自獨立。</string>
+    <string name="frp_instance_save_failed">無法儲存實例名稱，請稍後重試。</string>
 </resources>

@@ -6,13 +6,18 @@ import android.system.OsConstants
 import java.io.File
 
 internal object OwnedProcesses {
-    fun groupFor(path: String): Int? = File("/proc").listFiles()?.firstNotNullOfOrNull { directory ->
+    fun groupFor(path: String, configPath: String? = null): Int? = File("/proc").listFiles()?.firstNotNullOfOrNull { directory ->
         val pid = directory.name.toIntOrNull() ?: return@firstNotNullOfOrNull null
         runCatching {
             if (Os.stat(directory.path).st_uid != Process.myUid() ||
                 Os.readlink(File(directory, "exe").path).removeSuffix(" (deleted)") != path
             ) {
                 return@runCatching null
+            }
+            if (configPath != null) {
+                val arguments = File(directory, "cmdline").readBytes().toString(Charsets.UTF_8).split('\u0000')
+                // 僅辨識以指定設定啟動的客戶端，不包含 verify 與版本探針。
+                if (arguments.getOrNull(1) != "-c" || arguments.getOrNull(2) != configPath) return@runCatching null
             }
             val fields = File(directory, "stat").readText().substringAfterLast(") ").split(' ')
             // frpc 透過 setsid 建立自己的 session；不能清理 App 原有的程序群組。

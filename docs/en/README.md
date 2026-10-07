@@ -53,6 +53,10 @@ VPN interfaces appear separately and are not merged into the system default. Int
 
 ## frp client
 
+Settings → frp opens the server instance list. Choose "Add server" and enter a name to open its settings; instances can also be renamed from the list. Multiple instances can connect to different frps servers simultaneously. Each has independent TOML, authentication, proxy/visitor rules, support files, network selection, and runtime controls. Stopping, restarting, or changing the network affects only that instance. The notification offers up to three individual stop actions; control other instances from the list.
+
+Existing configuration, support files, external-token-command settings, and network preferences remain in place as the "Default instance". Returning from the editor opens the instance list, with confirmation for unsaved changes. When Android recreates the foreground service, it restores only instances previously requested to run. Avoid local listening-port conflicts between instances.
+
 Settings → frp provides the complete frp client for connecting to an external frp server; the phone does not provide an frps server. This subpage is separate from Outbound network: frpc runs in its own foreground service with its own notification, and starting or stopping it does not affect 3x-ui / Xray. frpc has its own network interface selector, saved independently of Xray. It follows Android system routing by default; selecting an interface binds frpc and DNS to that Android network. Switching restarts frpc; if the selected network becomes unavailable, frpc waits for recovery without falling back.
 
 1. Choose "Form" or "TOML". The form groups basic settings, authentication, transport, TLS, and other settings; expand the sections you need. It supports Token/OIDC, all TCP/KCP/QUIC/WebSocket/WSS transports, and metadata.
@@ -73,9 +77,10 @@ filesDir/server/{db,xray,log}
                   ↓
 Browser → http://127.0.0.1:2053/
 
-MainActivity → FrpService → nativeLibraryDir/libfrpc.so → external frps
+MainActivity → FrpService → per-instance libfrpc.so processes → external frps
                   ↓
-filesDir/server/frp/{frpc.toml,support/}
+filesDir/server/frp/{frpc.toml,support/} (default)
+filesDir/server/frp/instances/{UUID}/{frpc.toml,support/}
 ```
 
 ## Validation
@@ -99,6 +104,8 @@ adb reverse --remove tcp:18080
 
 frpc device tests cover real TCP/UDP round trips, reconnects, independent start and stop, retention of invalid configuration, support-file import, and group cleanup of external token commands and on parent death; this is not the same as validating every frp protocol or plugin.
 Use the isolated package and a development device for device tests; stop the service of the regular package first to release the fixed panel port, and the tests do not remove the regular package's data. Executed items and limitations are in the [progress record](../PROGRESS.md).
+
+For multi-instance validation, run `scripts/frp-validation-server.py --multi-instance` and reverse ports with `adb reverse tcp:17000 tcp:17000` and `adb reverse tcp:17001 tcp:17001`. Limit device tests with `-Pandroid.testInstrumentationRunnerArguments.class=io.github.xraydroid.runtime.FrpMultiInstanceTest`. Stop the fixture and remove both forwards afterward. This case verifies simultaneous login to two servers and independent restart, network waiting, stop, and rapid start/stop.
 
 ## License and sources
 

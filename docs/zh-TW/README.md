@@ -58,6 +58,10 @@ VPN 獨立顯示，不併入系統預設。沒有可用 Android 網路、已關�
 
 ## frp 用戶端
 
+「設定」→「frp」先顯示伺服器實例清單。點「新增伺服器」並輸入實例名稱，便可進入個別設定；清單也可重新命名實例。多個實例可同時連線至不同 frps，每個實例的 TOML、驗證資料、轉發／訪客規則、支援檔案、網路介面選擇及啟停狀態皆獨立。停止、重新啟動或網路切換只影響該實例；通知列提供個別停止動作（最多顯示三個，其餘從清單進入控制）。
+
+更新後原有設定、支援檔案、外部權杖指令選項與網路偏好保留為「預設實例」，不搬移原有檔案。返回個別設定會先回到伺服器清單，有未存草稿時仍會先確認。Android 重建前景服務時，只恢復先前要求執行的實例。多實例若使用相同本機監聽連接埠，仍須自行避免衝突。
+
 「設定」→「frp」提供完整 frp 用戶端，連線至外部 frp 服務端；手機不提供 frp 伺服器。此子頁與出站網路分開，frpc 使用獨立的 Foreground Service 與通知，啟停不影響 3x-ui／Xray。frpc 可在此頁選擇網路介面，設定與 Xray 分別儲存；預設跟隨 Android 系統路由，指定介面時將 frpc 與 DNS 綁定至該 Android 網路。切換會重新啟動 frpc；指定網路不可用時等待恢復，不回退其他網路。
 
 1. 可選「表單配置」或「TOML 配置」。表單依基本設定、驗證、傳輸、TLS 與其他設定分組，展開需要的區塊即可編輯；支援 Token／OIDC、全部 TCP／KCP／QUIC／WebSocket／WSS 傳輸協定與中繼資料。
@@ -83,9 +87,10 @@ filesDir/server/{db,xray,log}
                   ↓
 Browser → http://127.0.0.1:2053/
 
-MainActivity → FrpService → nativeLibraryDir/libfrpc.so → external frps
+MainActivity → FrpService → per-instance libfrpc.so processes → external frps
                   ↓
-filesDir/server/frp/{frpc.toml,support/}
+filesDir/server/frp/{frpc.toml,support/} (default)
+filesDir/server/frp/instances/{UUID}/{frpc.toml,support/}
 ```
 
 ## 驗證
@@ -109,6 +114,8 @@ adb reverse --remove tcp:18080
 
 frpc 裝置測試涵蓋 TCP／UDP 實際往返、斷線重連、獨立啟停、無效設定保留、支援檔案匯入，以及外部權杖指令與父程序死亡的群組清理；不等同於所有 frp 協定／外掛已逐一驗證。
 裝置測試請使用隔離套件與開發裝置；既有正式套件須先停止服務以釋放固定面板連接埠，測試不會移除正式套件資料。已執行項目與限制見[進度紀錄](../PROGRESS.md)。
+
+多實例測試使用 `scripts/frp-validation-server.py --multi-instance` 啟動兩個本機 frps，並以 `adb reverse tcp:17000 tcp:17000`、`adb reverse tcp:17001 tcp:17001` 轉送。可用 `-Pandroid.testInstrumentationRunnerArguments.class=io.github.xraydroid.runtime.FrpMultiInstanceTest` 限定裝置測試；測試後停止 fixture 並移除這兩個轉送。此案例驗證兩個伺服器同時登入，以及重啟、網路等待、停止與快速啟停互不影響。
 
 ## 授權與來源
 
