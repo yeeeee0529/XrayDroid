@@ -2,6 +2,12 @@
 
 日期：2026-10-07。
 
+## 0.3.0 版本與封裝（2026-10-07）
+
+- 依使用者選擇新增 v0.3.0，保留 v0.2.0；`versionCode` 升為 3、`versionName` 升為 `0.3.0`，CHANGELOG 的多實例功能移入 0.3.0 段落。功能與原生核心不變，沿用上一節已通過的相關單元／真機測試，不重跑完整 suite。
+- `:app:ktlintFormat`、`:app:ktlintCheck`、`:app:lintDebug`、`:app:assembleRelease` 通過；Kotlin 編譯與 release lint 通過。Android lint 為 0 errors／0 warnings，保留 2 個既有 hints。
+- `aapt2 dump badging` 確認 APK 套件為 `io.github.xraydroid`、versionCode 3／versionName 0.3.0；`apksigner verify` 通過。APK 為 58,507,051 bytes，SHA-256 `0be7f141ffb03ddf81eb911e869fcdcc5de3bc6b2d9a07f5e0b55182b1e6eed1`。
+
 ## frpc 多伺服器實例（2026-10-07）
 
 - frp 入口改為伺服器實例清單，支援新增與重新命名；個別編輯器保留完整表單／TOML、代理／訪客、匯入與草稿確認。每個實例的設定、支援檔案、網路偏好、外部權杖指令選項與執行狀態各自獨立，可同時連線不同 frps。
