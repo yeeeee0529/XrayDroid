@@ -175,13 +175,17 @@ class XuiService : Service() {
         OwnedProcesses.terminate(paths)
         delay(300)
         OwnedProcesses.terminate(paths, OsConstants.SIGKILL)
-        ServerSocket().use { socket ->
+        // 綁定測試與子程序啟動緊接在同一區間內完成：socket 持有至 start() 返回後才釋放，
+        // 消除關閉與 spawn 之間的 TOCTOU 空檔，避免其他 App 先佔用 127.0.0.1:2053。
+        // 子程序啟動後需一段時間才會自行綁定，屆時 socket 已關閉，不影響核心綁定。
+        // 取消例外也會經由 use 隨區間結束關閉 socket。
+        val child: java.lang.Process = ServerSocket().use { socket ->
             socket.reuseAddress = true
             socket.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 2053))
-        }
-        val child = synchronized(processLock) {
-            if (generation.get() != ticket) throw CancellationException()
-            layout.builder(networkHandle = networkHandle).start().also { process = it }
+            synchronized(processLock) {
+                if (generation.get() != ticket) throw CancellationException()
+                layout.builder(networkHandle = networkHandle).start().also { process = it }
+            }
         }
         // 核心輸出可能包含登入資料；只顯示 App 自身的生命週期事件。
         scope.launch {

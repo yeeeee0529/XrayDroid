@@ -1,6 +1,22 @@
 # 進度與驗證紀錄
 
-日期：2026-10-07。
+日期：2026-10-15。
+
+## 0.3.1 版本與發布（2026-10-15）
+
+- 依使用者選擇發布 v0.3.1；`versionCode` 升為 4、`versionName` 升為 `0.3.1`，CHANGELOG 新增 0.3.1 段落（TOCTOU 修補）。
+- `:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleRelease` 通過（JDK 17）。
+- `aapt2 dump badging`（`.tools/android-sdk/build-tools/36.0.0`）確認套件為 `io.github.xraydroid`、versionCode 4／versionName 0.3.1；`apksigner verify` 通過 v2 scheme，簽署者 `CN=Android Debug`（SHA-256 `786bbe3dc5b303242dbfcaa18912cdc6bd576892bfc2301aa200d3f0356d8ce0`），與 v0.1.0 相同金鑰，可覆蓋安裝。APK 為 58,507,271 bytes，SHA-256 `1b9090777a50b8764a6e287d2de423757d06daf67d6d46f58c81e820c5d5e2e3`。
+- 重跑修補後的 `:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug`：BUILD SUCCESSFUL（779ms，2 executed／63 up-to-date，含先前對修改後原始碼的完整編譯與測試）。
+- 發布流程：標籤 `v0.3.1` 隨 main commit 建立，`gh release create v0.3.1 --prerelease` 附加 `app-release.apk`；儀器測試（`ServerLifecycleTest`、`NetworkSwitchLifecycleTest`）與實機搶佔 2053 對抗情境仍為未驗證項目。
+- 原生核心與修補未改動；`patches/` 最新 mtime（10-06）仍早於 `jniLibs`（10-06 之後建置），未重建 Go 核心。
+
+## 面板連接埠 TOCTOU 修補（2026-10-15）
+
+- `XuiService.startServer`（`app/src/main/java/io/github/xraydroid/runtime/XuiService.kt`）原流程在測試 127.0.0.1:2053 可綁定後立即關閉 `ServerSocket`，才 spawn 子程序；Android 回送對全裝置共用，第三方 App 可在此空檔搶先綁定 2053，使真正的面板無法綁定。
+- 改為把綁定測試與子程序 `start()` 放進同一個 `ServerSocket().use` 區間：bind 成功後立即取得 `processLock`、檢查 generation ticket 並 spawn，socket 持有至 `start()` 返回後才隨 `use` 關閉，把空檔縮到近乎為零。子程序需要時間才會自行綁定，屆時 socket 已釋放，核心可正常綁定。取消路徑（generation 不符拋出 `CancellationException`）也會經由 `use` 關閉 socket。網路介面 gating、`OwnedProcesses.terminate`、ticket／generation 取消檢查、`monitor()` 流程、錯誤轉移與 `WAITING_FOR_NETWORK` 邏輯皆未改動。
+- 實際驗證：`:app:ktlintFormat`、`:app:ktlintCheck`、`:app:lintDebug`、`:app:testDebugUnitTest`、`:app:assembleDebug` 全部通過（JDK 17，Gradle 顯示 BUILD SUCCESSFUL；單元測試任務 UP-TO-DATE）。
+- 未在裝置上重跑 `ServerLifecycleTest`、`NetworkSwitchLifecycleTest` 儀器測試，亦未實機驗證搶佔 2053 的對抗情境；本輪無裝置，僅確認 Kotlin 主程式與測試編譯通過。
 
 ## 0.3.0 版本與封裝（2026-10-07）
 
