@@ -1,6 +1,15 @@
 # 進度與驗證紀錄
 
-日期：2026-10-15。
+日期：2026-11-04。
+
+## GitHub Actions CI（2026-11-04）
+
+- 新增兩條 workflow：`ci.yml`（主線 push 與 PR 執行 `scripts/check-string-resources.py` ＋ `:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest`，失敗時上傳 reports）與 `ci-core.yml`（paths 觸發：`patches/**`、`scripts/build-*.sh`、`scripts/extract-xray.py`、`app/build.gradle.kts`，另有 workflow_dispatch）。核心 job 以 sdkmanager 安裝 NDK `30.0.16248370`、setup-go `1.27.3`、setup-node `24`；`actions/cache` 快取 `.core-cache/`（內含 GOCACHE／GOMODCACHE），key 以 patches 與建構腳本 hash 計算；`upstream/` 每次重新淺複製，保證修補總是套在乾淨的 pinned checkout。發布流程維持手動；實機儀器測試與 frp fixture 仍依 AGENTS.md 在本地執行。
+- 新增 `scripts/check-string-resources.py`：stdlib XML 解析比對三語系 strings.xml 頂層資源名稱與順序（現況 340 筆；plural 內部 quantity 因語言文法可不同——en 有 `one`／`other`、zh 僅 `other`——不在檢查範圍）。本地實測：同步時 exit 0；沙盒中兩行互換時輸出 `resource N is <string ...> but ... out of sync` 並 exit 1。
+- `app/build.gradle.kts`：`verifyCore` 改為只由 `packageDebug`／`packageRelease` 觸發（原綁 `preBuild`，使乾淨 checkout 的 lint／單元測試因缺 `.so` 而失敗）；lint disable 新增 `OldTargetApi`（CI runner 預裝比本機新的 Android 平台，與固定的 targetSdk 36 衝突，屬既有「固定已驗證版本」同類檢查）。本地 JDK 17 下 `ktlintFormat`、`ktlintCheck`、`lintDebug`、`testDebugUnitTest` 全數通過後才推送。
+- 觀察到的 run：首輪快檢困於 `verifyCore`（`Missing libxui.so`）；二輪困於 lint `OldTargetApi`（`build.gradle.kts:15 targetSdk = 36`）；三輪困於 ktlint `Unnecessary trailing comma`（新增清單引入尾隨逗號，當次本地未先跑 ktlintFormat）；四輪 commit `e3a7984` 全綠——快檢 run `41772033520` ✓ 2m4s、免費 Ubuntu x86_64 runner；core run `41772033582` ✓ 4m40s。core 冷建（run `41770123531`）7m36s，快取命中後為 4m46s／4m40s；NDK 安裝、`build-core.sh`、`assembleDebug`、APK 驗證、artifact 上傳全 ✓。修復前的一個 dispatch run 於 package 步驟被併發控制取消（`The operation was canceled.`），非實質失敗。
+- core run 驗證輸出：`aapt2 dump badging` 顯示 `io.github.xraydroid` versionCode 4／versionName 0.3.1、minSdk 26／targetSdk 36；`apksigner verify` 通過（debug key）；APK SHA-256 `1cc1d8effc0b105842c830313469d3187ccd80dea66e3b466058593abd8b5b83`。
+- 限制與未驗證：GitHub Actions 上無實機，`connectedDebugAndroidTest` 與 `scripts/frp-validation-server.py` fixture 不在覆蓋範圍；actions 多為 v4 系（僅 setup-java 升 v6），Node.js 20→24 deprecation 告警持續存在，ubuntu-latest 快照後續（2026-10-19 起 Ubuntu 26 輪替）的 SDK 變化未評估；本機預設 JDK 已漂移至 Java 27，Gradle 需 `JAVA_HOME` 指向 Zulu 17，待有意識地修正本機工具鏈。
 
 ## 0.3.1 版本與發布（2026-10-15）
 
