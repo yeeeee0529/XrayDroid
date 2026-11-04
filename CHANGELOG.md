@@ -3,6 +3,7 @@
 ## 未發布
 
 - 新增 GitHub Actions CI：主線 push 與 PR 自動執行 `ktlintCheck`、`lintDebug`、`testDebugUnitTest`，並以新增的 `scripts/check-string-resources.py` 檢查三語系字串資源名稱與順序同步（取代人工比對）。核心相關路徑變更時另以 `build-core.sh` 重建鎖定版本的原生核心、打包 debug APK 並做 aapt2／apksigner 與 SHA-256 驗證，附上 artifact。實機儀器測試與 release 發布維持手動流程。
+- `verifyCore` 的核心庫與 geo 資產存在性檢查改為只繫於打包任務（`packageDebug`／`packageRelease`），編譯類任務與 CI 快檢不需預先建置的原生核心。
 
 ## 0.3.1 — 2026-10-15
 

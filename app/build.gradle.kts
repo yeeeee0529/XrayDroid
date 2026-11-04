@@ -90,4 +90,5 @@ val verifyCore by tasks.registering {
         }
     }
 }
-tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(verifyCore) }
+// 打包才需要核心庫與 geo 資產就位；編譯類任務與 CI 快檢在乾淨的 checkout 也要能執行。
+tasks.matching { it.name in setOf("packageDebug", "packageRelease") }.configureEach { dependsOn(verifyCore) }
