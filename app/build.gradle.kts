@@ -47,7 +47,14 @@ android {
     lint {
         warningsAsErrors = true
         // 固定已驗證的工具與套件版本，第一版限定 arm64 Android 裝置。
-        disable += listOf("GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion", "ChromeOsAbiSupport")
+        // OldTargetApi：CI runner 可能預裝較新的 Android 平台，與固定的 targetSdk 36 衝突。
+        disable += listOf(
+            "OldTargetApi",
+            "GradleDependency",
+            "NewerVersionAvailable",
+            "AndroidGradlePluginVersion",
+            "ChromeOsAbiSupport",
+        )
     }
 }
 
