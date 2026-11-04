@@ -1,5 +1,9 @@
 # 更新紀錄
 
+## 未發布
+
+- 新增 GitHub Actions CI：主線 push 與 PR 自動執行 `ktlintCheck`、`lintDebug`、`testDebugUnitTest`，並以新增的 `scripts/check-string-resources.py` 檢查三語系字串資源名稱與順序同步（取代人工比對）。核心相關路徑變更時另以 `build-core.sh` 重建鎖定版本的原生核心、打包 debug APK 並做 aapt2／apksigner 與 SHA-256 驗證，附上 artifact。實機儀器測試與 release 發布維持手動流程。
+
 ## 0.3.1 — 2026-10-15
 
 - 修正面板連接埠檢查的 TOCTOU 空檔：`XuiService` 啟動流程改將 `127.0.0.1:2053` 綁定測試與子程序啟動緊接於同一區間，socket 持有至啟動返回後才釋放，避免第三方 App 於空檔搶先佔用連接埠使真正的面板無法綁定。

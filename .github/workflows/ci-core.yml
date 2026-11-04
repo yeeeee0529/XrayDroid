@@ -1,0 +1,100 @@
+# GitHub Actions：以可重現腳本重建鎖定版本的原生核心並打包 debug APK。
+# 觸發自核心相關路徑變更或手動；發布流程維持手動，實機儀器測試依 AGENTS.md 在本地執行。
+# build-core.sh 的 NDK host 判斷僅支援 Darwin／Linux x86_64，因此用 x86_64 Ubuntu runner。
+name: CI core build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "patches/**"
+      - "scripts/build-core.sh"
+      - "scripts/build-frpc.sh"
+      - "scripts/extract-xray.py"
+      - "app/build.gradle.kts"
+      - ".github/workflows/ci-core.yml"
+  pull_request:
+    paths:
+      - "patches/**"
+      - "scripts/build-core.sh"
+      - "scripts/build-frpc.sh"
+      - "scripts/extract-xray.py"
+      - "app/build.gradle.kts"
+      - ".github/workflows/ci-core.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Build pinned core and package the debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      # Go 建置與模組快取放到 .core-cache/，隨 actions/cache 一起保存。
+      GOCACHE: ${{ github.workspace }}/.core-cache/go-build
+      GOMODCACHE: ${{ github.workspace }}/.core-cache/go-mod
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Set up Go 1.27.3
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.3"
+          # Gradle 與 Go 快取由下方 actions/cache 統一管理。
+          cache: false
+
+      - name: Install Android NDK r30
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" "ndk;30.0.16248370" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          # 包含 pinned Xray 官方 zip、修補後的 Go 建置快取；上游工作目錄每次重新淺複製，
+          # 確保修補總是套到乾淨的 pinned checkout。
+          key: core-${{ hashFiles('patches/**', 'scripts/build-core.sh', 'scripts/build-frpc.sh', 'scripts/extract-xray.py') }}
+          restore-keys: |
+            core-
+          path: .core-cache/
+
+      - name: Build the pinned native core
+        run: ./scripts/build-core.sh
+
+      - name: Package the debug APK
+        run: ./gradlew :app:assembleDebug
+
+      - name: Verify the APK
+        run: |
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          "$AAPT2" dump badging "$APK" | head -5
+          "$APKSIGNER" verify "$APK"
+          sha256sum "$APK"
+
+      - name: Upload the debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

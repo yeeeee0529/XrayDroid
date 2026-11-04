@@ -1,0 +1,51 @@
+# GitHub Actions：主線與 PR 的快速檢查（ktlint、lint、單元測試、字串資源同步）。
+# 原生核心建置另見 ci-core.yml；實機儀器測試與發布流程維持 AGENTS.md 的本地手動流程。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: ktlint, lint and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Check string resources are in sync
+        run: python3 scripts/check-string-resources.py
+
+      - name: Run ktlint, lint and unit tests
+        run: ./gradlew :app:ktlintCheck :app:lintDebug :app:testDebugUnitTest
+
+      - name: Upload lint and test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-reports
+          path: |
+            app/build/reports/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
