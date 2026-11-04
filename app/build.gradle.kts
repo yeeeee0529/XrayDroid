@@ -53,7 +53,7 @@ android {
             "GradleDependency",
             "NewerVersionAvailable",
             "AndroidGradlePluginVersion",
-            "ChromeOsAbiSupport",
+            "ChromeOsAbiSupport"
         )
     }
 }
