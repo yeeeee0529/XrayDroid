@@ -95,6 +95,76 @@ class PredictiveBackNavigationTest {
     }
 
     @Test
+    fun forwardNavigationKeepsParentCompositionAndAllowsImmediateBack() {
+        var parentCompositions = 0
+        var current = "home"
+        compose.setContent {
+            var page by remember { mutableStateOf("home") }
+            XrayDroidTheme {
+                PredictiveBackNavigation(page, { if (it == "editor") "home" else null }, {
+                    current = it
+                    page = it
+                }) { shown, back ->
+                    if (shown == "home") {
+                        val instance = remember { ++parentCompositions }
+                        Button(onClick = {
+                            current = "editor"
+                            page = "editor"
+                        }) { Text("Open:$instance") }
+                    } else {
+                        Button(onClick = back) { Text("Back") }
+                    }
+                }
+            }
+        }
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithText("Open:1").performClick()
+        compose.mainClock.advanceTimeBy(64)
+        // 進場途中兩頁都只供繪製；系統返回仍可立即中斷進場。
+        compose.onNodeWithText("Open:1").assertDoesNotExist()
+        compose.onNodeWithText("Back").assertDoesNotExist()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.mainClock.advanceTimeBy(600)
+        compose.runOnIdle { assertEquals("home", current) }
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithText("Open:1").assertIsDisplayed()
+        assertEquals(1, parentCompositions)
+    }
+
+    @Test
+    fun secondBackDuringCommitNavigatesTwoLevels() {
+        val visited = mutableListOf<String>()
+        compose.setContent {
+            var page by remember { mutableStateOf("detail") }
+            XrayDroidTheme {
+                PredictiveBackNavigation(
+                    page,
+                    {
+                        when (it) {
+                            "detail" -> "list"
+                            "list" -> "home"
+                            else -> null
+                        }
+                    },
+                    {
+                        visited += it
+                        page = it
+                    }
+                ) { shown, _ -> Text(shown) }
+            }
+        }
+        compose.mainClock.autoAdvance = false
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.mainClock.advanceTimeBy(64)
+        // 第一次返回的收尾還在播放時再按一次。
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.mainClock.advanceTimeBy(600)
+        compose.runOnIdle { assertEquals(listOf("list", "home"), visited) }
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithText("home").assertIsDisplayed()
+    }
+
+    @Test
     fun toolbarBackCompletesNavigation() {
         showNavigation()
         compose.onNodeWithText("Back").performClick()

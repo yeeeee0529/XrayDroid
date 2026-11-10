@@ -13,7 +13,11 @@
 - 驗證（JDK 17）：`:app:ktlintFormat`、`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 通過；`scripts/check-string-resources.py` 通過。
 - 模擬器驗證（`.tools` 內的 `XrayDroid_API_36`，Android 16／arm64，headless）：`:app:connectedDebugAndroidTest -PvalidationApplicationId=io.github.xraydroid.validation` 42 項、0 failures、4 skipped（需 `scripts/frp-validation-server.py` fixture 的 frpc 轉發案例，本輪未啟動 fixture）。測試以中文文字尋找節點，模擬器系統語系為 en-US 時 `SettingsNavigationTest` 會失敗；本輪暫時將 `persist.sys.locale` 設為 zh-TW 執行，結束後已還原為 en-US 並關閉模擬器。正式套件 `io.github.xraydroid` 未安裝新版、資料未動；validation 套件已移除。
 - 截圖檢視（深色、zh-TW）：首頁、設定、出站網路以 `screencap` 檢視；frp 頁因 `FLAG_SECURE` 為全黑，改以暫時的 instrumented harness（未提交）`captureToImage` 檢視實例清單、實例頁頂部、表單展開、底部與回饋訊息；預測返回以同法擷取進度 15%／35%／70% 三格，確認離開頁縮小淡出、進入頁放大淡入。
-- 未驗證：實體裝置與實際手勢導覽（模擬器為三鍵導覽，手勢事件由測試經 `OnBackPressedDispatcher` 注入）、淺色主題與 Android 12 以下的非動態配色、橫向與平板寬度、RTL、鍵盤顯示時浮動工具列的位置、TalkBack 實際朗讀、啟動後的執行中狀態畫面（本輪未啟動核心服務）。向前導覽仍為即時切換，沒有進入動畫。
+- 追加（同日）：加入進入子頁的進場動畫（`FORWARD_MILLIS = 300`，返回的鏡像；在組合階段判定父 → 子切換並把剩餘量設為 1，避免子頁首格閃現；進場期間子頁與上一頁同樣清除語意並攔截觸控）。
+- 追加時發現已推送的 `c9b9c0d` 在模擬器上 `SettingsNavigationTest` 約半數失敗；先前兩次完整執行恰好通過。以暫時的 logcat 追蹤（未提交）確認原因：重新設計後 frp 實例頁標題為實例名稱，測試以「預設實例」判斷已回到清單的條件提早成立，第二次系統返回落在第一次的 250ms 收尾期間；`begin()` 會以同一目標重播，第二次返回因此被吃掉。另有一個既有競態：自己完成的返回也經 `LaunchedEffect(page)` 重設，可能使緊接的下一次返回失效。
+- 修正：`generation` 等改為非 State 的持有者；組合階段區分自己完成的返回（`ownDestination`）與外部切頁，只有後者使手勢失效；收尾中再次返回時先立即套用上一次的目標（`committing`）再開始下一層。新增 `secondBackDuringCommitNavigatesTwoLevels` 與 `forwardNavigationKeepsParentCompositionAndAllowsImmediateBack`。
+- 追加驗證：修正後 `SettingsNavigationTest` 連續 12 次通過、`PredictiveBackNavigationTest` 6 項通過；完整 `connectedDebugAndroidTest`（模擬器、zh-TW、validation 套件）44 項、0 failures、4 skipped（同上，需 frp fixture）；`ktlintCheck`、`lintDebug`、`testDebugUnitTest`、`assembleDebug` 通過。模擬器語系已還原 en-US 並關閉。
+- 未驗證：實體裝置與實際手勢導覽（模擬器為三鍵導覽，手勢事件由測試經 `OnBackPressedDispatcher` 注入）、淺色主題與 Android 12 以下的非動態配色、橫向與平板寬度、RTL、鍵盤顯示時浮動工具列的位置、TalkBack 實際朗讀、啟動後的執行中狀態畫面（本輪未啟動核心服務）。進場動畫只以測試中的時鐘推進驗證邏輯，未擷取中間影格。
 
 ## GitHub Actions CI（2026-11-04）
 
