@@ -13,6 +13,7 @@
 
 ## Conventions
 - Use English identifiers and diagnostics, Traditional Chinese user-facing text and new source comments.
+- Any native UI change must follow `docs/DESIGN.md` (Material 3 Expressive components, tokens, accessibility, predictive back motion, and UI verification). Read it before editing anything under `ui/` or `res/drawable`, reuse `ui/components/` instead of writing parallel layouts, and update the file in the same change when you add a pattern it does not cover.
 - User-facing text lives in `app/src/main/res/values/strings.xml` (zh-TW default) with `values-en` and
   `values-zh-rCN`; keep the three in sync — same names, same order — and use `<plurals>` for counts.
 - Keep root README concise and cross-link `docs/zh-TW/README.md` and `docs/en/README.md`; update all three when behavior changes.
