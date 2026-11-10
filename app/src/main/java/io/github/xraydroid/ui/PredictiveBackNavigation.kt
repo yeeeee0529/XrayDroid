@@ -2,7 +2,9 @@ package io.github.xraydroid.ui
 
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -30,6 +32,18 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
+// Android 預測返回設計規範「全螢幕介面」的動態規格：
+// 離開頁 100% → 90%、進入頁 110% → 100%；以 35% 進度為界做 fade through，
+// 離開頁在此之前淡出完畢，進入頁在此之後才開始淡入，交界處兩者皆不可見。
+private const val EXIT_SCALE = 0.9f
+private const val ENTER_SCALE = 1.1f
+private const val FADE_THROUGH_THRESHOLD = 0.35f
+private const val COMMIT_MILLIS = 250
+private const val CANCEL_MILLIS = 200
+
+// 與 SystemUI 返回動畫相同的插值器，讓畫面在手勢初期就明顯反應並快速離開。
+private val BackEasing = CubicBezierEasing(0.1f, 0.1f, 0f, 1f)
+
 @Composable
 internal fun PredictiveBackNavigation(
     page: String,
@@ -42,8 +56,8 @@ internal fun PredictiveBackNavigation(
     var target by remember { mutableStateOf<String?>(null) }
     var generation by remember { mutableStateOf(0) }
     var animation by remember { mutableStateOf<Job?>(null) }
+    // 單一進度同時驅動手勢預覽、完成與取消：0 為目前頁面，1 為上一頁。
     val progress = remember { Animatable(0f) }
-    val exit = remember { Animatable(0f) }
 
     // 頁面由通知或其他導覽切換時，使舊手勢及收尾失效。
     LaunchedEffect(page) {
@@ -51,14 +65,12 @@ internal fun PredictiveBackNavigation(
         animation?.cancel()
         target = null
         progress.snapTo(0f)
-        exit.snapTo(0f)
     }
 
     suspend fun begin(): Int {
         generation++
         animation?.cancel()
         progress.snapTo(0f)
-        exit.snapTo(0f)
         target = parent(page)
         return generation
     }
@@ -66,8 +78,8 @@ internal fun PredictiveBackNavigation(
     fun complete(token: Int) {
         val destination = target ?: return
         animation = scope.launch {
-            // 獨立收尾進度讓前景逐漸消失；僅縮小到 90% 仍會在切頁時突跳。
-            exit.animateTo(1f, tween(200, easing = FastOutSlowInEasing))
+            // 從手勢停下的位置把轉場播完再切頁；縮放的插值在繪製時套用，這裡保持線性。
+            progress.animateTo(1f, tween(COMMIT_MILLIS, easing = LinearEasing))
             if (token == generation) {
                 navigate(destination)
                 target = null
@@ -86,7 +98,7 @@ internal fun PredictiveBackNavigation(
             // 系統會取消事件工作的 Job；回復動畫必須由仍有效的 Compose scope 執行。
             if (token == generation) {
                 animation = scope.launch {
-                    progress.animateTo(0f, tween(180, easing = FastOutSlowInEasing))
+                    progress.animateTo(0f, tween(CANCEL_MILLIS, easing = FastOutSlowInEasing))
                     if (token == generation) target = null
                 }
             }
@@ -97,7 +109,7 @@ internal fun PredictiveBackNavigation(
     val requestBack: () -> Unit = {
         if (target == null) scope.launch { complete(begin()) }
     }
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer)) {
         // 所有頁面使用同一個 key 呼叫位置，手勢前後不重建 remember 草稿與捲動位置。
         // 預先建立上一頁，避免首次組合與測量吃掉收尾動畫的大部分時間。
         val pages = listOfNotNull(target ?: parent(page), page).distinct()
@@ -123,18 +135,19 @@ internal fun PredictiveBackNavigation(
                             }
                         )
                         .graphicsLayer {
-                            val amount = if (target == null) 0f else lerp(progress.value, 1f, exit.value)
+                            val amount = if (target == null) 0f else progress.value
+                            val eased = BackEasing.transform(amount)
                             if (foreground) {
-                                scaleX = lerp(1f, 0.9f, amount)
+                                scaleX = lerp(1f, EXIT_SCALE, eased)
                                 scaleY = scaleX
-                                alpha = if (target == null) 1f else 1f - exit.value
-                                shape = RoundedCornerShape((24f * amount).dp)
+                                alpha = 1f - (amount / FADE_THROUGH_THRESHOLD).coerceIn(0f, 1f)
+                                // 縮小後的頁面邊緣以圓角收邊，呈現為一塊可被拉離的介面。
+                                shape = RoundedCornerShape((28f * eased).dp)
                                 clip = true
-                                shadowElevation = 16.dp.toPx() * amount
                             } else {
-                                alpha = if (target == null) 0f else 1f
-                                scaleX = lerp(0.95f, 1f, amount)
+                                scaleX = lerp(ENTER_SCALE, 1f, eased)
                                 scaleY = scaleX
+                                alpha = ((amount - FADE_THROUGH_THRESHOLD) / (1f - FADE_THROUGH_THRESHOLD)).coerceIn(0f, 1f)
                             }
                         }
                 ) { content(current, requestBack) }
