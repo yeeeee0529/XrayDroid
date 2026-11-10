@@ -2,6 +2,15 @@
 
 日期：2026-11-10。
 
+## 0.4.0 版本與發布（2026-11-10）
+
+- 依使用者指定發布 v0.4.0；`versionCode` 升為 5、`versionName` 升為 `0.4.0`，CHANGELOG「未發布」改為 0.4.0 段落（Material 3 Expressive 介面、預測返回動態規格、進場動畫、連按返回修正，以及先前累積的 CI 項目）。
+- `:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleRelease` 通過（JDK 17）；單元測試 29 項、0 失敗。
+- `aapt2 dump badging` 確認 `io.github.xraydroid`、versionCode 5／versionName 0.4.0、targetSdk 36；`apksigner verify` 通過 v2 scheme，簽署者 `CN=Android Debug`（SHA-256 `786bbe3dc5b303242dbfcaa18912cdc6bd576892bfc2301aa200d3f0356d8ce0`），與先前版本相同金鑰，可覆蓋安裝。APK 為 58,540,147 bytes，SHA-256 `f0fbbe218f235480b7a15864bf5e0f3ad297c2b96adb6b6eff9f5952645cd40d`。
+- 儀器測試沿用同日對 `232ee57` 的模擬器結果（44 項、0 failures、4 skipped）；版本號變更後未重跑。
+- 原生核心與修補未改動；`patches/` 最新 mtime（10-06 10:12）早於對應的 `jniLibs`（10-06 10:31），未重建 Go 核心。
+- 發布流程：`gh release create v0.4.0 --prerelease` 附加 `app-release.apk`，標籤建立於本段落所在的 main commit。
+
 ## Material 3 Expressive 介面重新設計與預測返回動態規格（2026-11-10）
 
 - 依使用者要求重新設計原生 UI，並依 Android「預測返回」設計頁調整過場。範圍限 `ui/` 與測試；`runtime/`、資料格式、頁面層級（首頁 → 設定 → 出站網路／frp → 實例）、`FLAG_SECURE` 與未存草稿確認皆未改動。未新增相依套件與字串資源，三語系 `strings.xml` 未變。
