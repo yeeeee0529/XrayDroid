@@ -4,6 +4,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
@@ -11,10 +12,12 @@ import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -34,12 +37,12 @@ class FrpAsyncEditorTest {
         val original = "# Synthetic comment\nserverAddr = 'localhost'\nserverPort = 7000\nincludes = ['conf.d/*.toml']\n"
         showScreen(original)
         enabledText("表單配置")
-        enabledText("TOML 配置").performClick()
+        enabledText("TOML 配置").click()
         assertEquals(original, editorText())
-        enabledText("表單配置").performClick()
-        enabledText("▸ 基本設定").performClick()
+        enabledText("表單配置").click()
+        enabledText("基本設定").click()
         enabledText("伺服器位址").performTextReplacement("edited.example.invalid")
-        enabledText("TOML 配置").performClick()
+        enabledText("TOML 配置").click()
         val document = FrpConfigDocument.parse(editorText())
         assertEquals("edited.example.invalid", document.get("serverAddr"))
         assertEquals(listOf("conf.d/*.toml"), document.get("includes"))
@@ -55,7 +58,7 @@ class FrpAsyncEditorTest {
         val latest = "# Latest synthetic fixture\nserverAddr = 'latest.example.invalid'\n"
         compose.runOnIdle { state.value = FrpState(config = latest, loaded = true) }
         enabledText("表單配置")
-        enabledText("TOML 配置").performClick()
+        enabledText("TOML 配置").click()
         assertEquals(latest, editorText())
     }
 
@@ -65,7 +68,7 @@ class FrpAsyncEditorTest {
         val start = SystemClock.elapsedRealtimeNanos()
         showScreen(config)
         enabledText("表單配置")
-        enabledText("▸ 基本設定").performClick()
+        enabledText("基本設定").click()
         enabledText("伺服器位址").performTextReplacement("large.example.invalid")
         Log.i("XrayDroidPerf", "synthetic nearLimit bytes=${config.length} loadAndEditNs=${SystemClock.elapsedRealtimeNanos() - start}")
         scrollToText("草稿尚未儲存。").assertIsDisplayed()
@@ -93,14 +96,14 @@ class FrpAsyncEditorTest {
             }
         }
         enabledText("表單配置")
-        enabledText("▸ 基本設定").performClick()
+        enabledText("基本設定").click()
         enabledText("伺服器位址").performTextReplacement("unsaved.example.invalid")
         val backLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.frp_instances_back)
-        scrollToText(backLabel).performClick()
+        compose.onNodeWithContentDescription(backLabel).performClick()
         compose.onNodeWithText("捨棄未儲存的草稿？").assertIsDisplayed()
         compose.runOnIdle { assertEquals(0, departures) }
         compose.onNodeWithText("繼續編輯").performClick()
-        scrollToText(backLabel).performClick()
+        compose.onNodeWithContentDescription(backLabel).performClick()
         compose.onNodeWithText("捨棄並返回").performClick()
         compose.runOnIdle {
             assertEquals(1, departures)
@@ -120,6 +123,9 @@ class FrpAsyncEditorTest {
             "FRP async verification requires an isolated validation application ID"
         }
     }
+
+    // 清單內容會捲到浮動工具列之下；以語意動作點按，不受疊在上方的控制項遮擋。
+    private fun SemanticsNodeInteraction.click() = performSemanticsAction(SemanticsActions.OnClick)
 
     private fun enabledText(text: String): SemanticsNodeInteraction {
         compose.waitUntil(30_000) {

@@ -4,6 +4,7 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -11,9 +12,9 @@ import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -70,7 +71,7 @@ class FrpPerformanceTest {
                 FrpScreen(FrpState(config = syntheticConfig(100), loaded = true), {}, {}, {}, {})
             }
         }
-        scrollToText("▸ fixture-0 · TCP").performClick()
+        scrollToText("fixture-0 · TCP").click()
         scrollToText("本機服務連接埠")
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val packageName = instrumentation.targetContext.packageName
@@ -89,22 +90,25 @@ class FrpPerformanceTest {
             it.startsWith("Total frames rendered:") || it.startsWith("Janky frames:") || it.contains("percentile:")
         }.forEach { Log.i("XrayDroidPerf", "synthetic ui frames $it") }
         compose.onNodeWithText("本機服務連接埠").performTextReplacement("invalid")
-        scrollToText("▸ fixture-99 · TCP")
+        scrollToText("fixture-99 · TCP")
         scrollToText("TOML 配置").assertIsNotEnabled()
-        scrollToText("儲存設定").assertIsNotEnabled()
+        compose.onNodeWithText("儲存設定").assertIsNotEnabled()
         scrollToText("本機服務連接埠")
         assertEquals(
             "invalid",
             compose.onNodeWithText("本機服務連接埠").fetchSemanticsNode().config[SemanticsProperties.EditableText].text
         )
         compose.onNodeWithText("本機服務連接埠").performTextReplacement("9123")
-        scrollToText("TOML 配置").performClick()
+        scrollToText("TOML 配置").click()
         val exported = scrollToText("frpc.toml").fetchSemanticsNode().config[SemanticsProperties.EditableText].text
         val document = FrpConfigDocument.parse(exported)
         assertEquals(9123L, document.rules("proxies").first()["localPort"])
         assertEquals(100, document.rules("proxies").size)
         assertEquals("preserved", document.get("metadatas.fixture"))
     }
+
+    // 清單內容會捲到浮動工具列之下；以語意動作點按，不受疊在上方的控制項遮擋。
+    private fun SemanticsNodeInteraction.click() = performSemanticsAction(SemanticsActions.OnClick)
 
     private fun scrollToText(text: String): SemanticsNodeInteraction {
         compose.waitUntil(30_000) {

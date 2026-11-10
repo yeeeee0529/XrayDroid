@@ -1,6 +1,8 @@
 package io.github.xraydroid.ui
 
 import androidx.annotation.StringRes
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,12 +12,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material3.Card
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,12 +36,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.collapse
+import androidx.compose.ui.semantics.expand
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import io.github.xraydroid.R
 import io.github.xraydroid.runtime.FrpConfigDocument
+import io.github.xraydroid.ui.components.ButtonLabel
+import io.github.xraydroid.ui.components.SectionHeader
 
 private data class FrpField(
     val path: String,
@@ -201,7 +215,12 @@ fun LazyListScope.frpConfigFormItems(
     val valid = formState.isValid
     val edit: (String, Any?) -> Unit = { path, value -> onChange(document.set(path, value)) }
     item(key = "frp/common/0") {
-        Text(stringResource(R.string.frp_form_note), style = MaterialTheme.typography.bodySmall)
+        Text(
+            stringResource(R.string.frp_form_note),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
     }
     item(key = "frp/common/1") {
         FrpSection(
@@ -311,16 +330,15 @@ fun LazyListScope.frpConfigFormItems(
         val rules = document.rules(kind)
         item(key = "frp/$kind/add") {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(stringResource(title), style = MaterialTheme.typography.titleLarge)
+                SectionHeader(stringResource(title))
                 val newType = formState.newRuleTypes[kind] ?: if (kind == "proxies") "tcp" else "stcp"
                 FrpChoice(R.string.frp_form_new_rule_protocol, newType, if (kind == "proxies") proxyTypes else visitorTypes, enabled) {
                     formState.newRuleTypes[kind] = it
                 }
-                OutlinedButton(onClick = { onChange(document.addRule(kind, newType)) }, enabled = enabled && valid) {
-                    Text(
-                        stringResource(
-                            if (kind == "proxies") R.string.frp_form_add_proxy else R.string.frp_form_add_visitor
-                        )
+                FilledTonalButton(onClick = { onChange(document.addRule(kind, newType)) }, enabled = enabled && valid) {
+                    ButtonLabel(
+                        R.drawable.ic_add,
+                        stringResource(if (kind == "proxies") R.string.frp_form_add_proxy else R.string.frp_form_add_visitor)
                     )
                 }
             }
@@ -342,14 +360,18 @@ fun LazyListScope.frpConfigFormItems(
                 )
                 FrpFields(ruleFields(kind, type), get, set, enabled, prefix, formState)
                 if (kind == "proxies") {
-                    FrpSection(stringResource(R.string.frp_form_section_proxy_advanced), formState, "$prefix/transport") {
+                    FrpSection(stringResource(R.string.frp_form_section_proxy_advanced), formState, "$prefix/transport", nested = true) {
                         FrpFields(proxyTransportFields, get, set, enabled, prefix, formState)
                     }
                 }
-                TextButton(onClick = {
-                    formState.removeRuleInputs(prefix)
-                    onChange(document.removeRule(kind, index))
-                }, enabled = enabled) { Text(stringResource(R.string.frp_form_delete_rule)) }
+                TextButton(
+                    onClick = {
+                        formState.removeRuleInputs(prefix)
+                        onChange(document.removeRule(kind, index))
+                    },
+                    enabled = enabled,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) { ButtonLabel(R.drawable.ic_delete, stringResource(R.string.frp_form_delete_rule)) }
             }
         }
     }
@@ -432,19 +454,54 @@ private fun readRule(rule: Map<String, Any>, path: String): Any? {
     return value
 }
 
+/** 可收合的設定分節；[nested] 用於規則內的次層分節，以較深的底色與外層區隔。 */
 @Composable
-private fun FrpSection(title: String, state: FrpFormState, id: String, content: @Composable () -> Unit) {
+private fun FrpSection(title: String, state: FrpFormState, id: String, nested: Boolean = false, content: @Composable () -> Unit) {
     val expanded = state.expandedSections[id] ?: false
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            TextButton(onClick = { state.expandedSections[id] = !expanded }, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    "${if (expanded) "▾" else "▸"} $title",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f)
+    val toggle = { state.expandedSections[id] = !expanded }
+    val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "sectionChevron")
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = if (nested) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surfaceBright
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(role = Role.Button, onClick = toggle)
+                    .semantics {
+                        // 以展開／收合動作表達狀態，螢幕閱讀器與測試都能辨識目前是否展開。
+                        if (expanded) {
+                            collapse {
+                                toggle()
+                                true
+                            }
+                        } else {
+                            expand {
+                                toggle()
+                                true
+                            }
+                        }
+                    }
+                    .padding(horizontal = 16.dp, vertical = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Icon(
+                    painterResource(R.drawable.ic_expand_more),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.graphicsLayer { rotationZ = rotation }
                 )
             }
-            if (expanded) content()
+            if (expanded) {
+                Column(
+                    Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) { content() }
+            }
         }
     }
 }
@@ -514,9 +571,10 @@ private fun FrpFields(
                         },
                         trailingIcon = if (field.kind == "secret") {
                             {
-                                TextButton(onClick = { revealed = !revealed }, enabled = enabled) {
-                                    Text(
-                                        stringResource(
+                                IconButton(onClick = { revealed = !revealed }, enabled = enabled) {
+                                    Icon(
+                                        painterResource(if (revealed) R.drawable.ic_visibility_off else R.drawable.ic_visibility),
+                                        contentDescription = stringResource(
                                             if (revealed) R.string.frp_form_hide else R.string.frp_form_reveal
                                         )
                                     )
@@ -551,7 +609,8 @@ private fun FrpChoice(@StringRes label: Int, value: String, choices: List<String
         Text(stringResource(label), style = MaterialTheme.typography.labelLarge)
         Box {
             OutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-                Text(if (value.isEmpty()) stringResource(R.string.frp_form_default_choice) else value)
+                Text(if (value.isEmpty()) stringResource(R.string.frp_form_default_choice) else value, modifier = Modifier.weight(1f))
+                Icon(painterResource(R.drawable.ic_expand_more), contentDescription = null)
             }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 choices.forEach { item ->
@@ -650,6 +709,6 @@ private fun FrpPairs(
         while (entries.any { it.first == name }) name = "key${suffix++}"
         onChange(entries + (name to ""))
     }, enabled = enabled && state.isValid) {
-        Text(stringResource(R.string.frp_form_add_entry, stringResource(label)))
+        ButtonLabel(R.drawable.ic_add, stringResource(R.string.frp_form_add_entry, stringResource(label)))
     }
 }

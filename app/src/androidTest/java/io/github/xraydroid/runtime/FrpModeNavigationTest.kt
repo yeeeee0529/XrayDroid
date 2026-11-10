@@ -1,7 +1,9 @@
 package io.github.xraydroid.runtime
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasAnyAncestor
@@ -15,6 +17,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -45,8 +48,11 @@ class FrpModeNavigationTest {
         clickText("TOML 配置")
         scrollToText("frpc.toml").performTextReplacement("serverPort = [")
         clickText("表單配置")
-        scrollToText("無法切換至表單，請檢查 TOML 語法與欄位型別；原有草稿已保留。")
-            .assertIsDisplayed()
+        // 操作回饋顯示在浮動工具列上方，不在捲動清單內。
+        compose.waitUntil(30_000) {
+            compose.onAllNodesWithText("無法切換至表單，請檢查 TOML 語法與欄位型別；原有草稿已保留。").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("無法切換至表單，請檢查 TOML 語法與欄位型別；原有草稿已保留。").assertIsDisplayed()
         assertEquals("serverPort = [", editorText())
         scrollToText("frpc.toml").performTextReplacement("serverAddr = 'localhost'\nserverPort = 7000\n")
         clickText("表單配置")
@@ -66,14 +72,14 @@ class FrpModeNavigationTest {
             file.path = 'support/fixture.txt'
             """.trimIndent()
         )
-        clickText("▸ 基本設定")
+        clickText("基本設定")
         scrollToText("伺服器位址").performTextReplacement("edited.example.invalid")
         scrollToText("伺服器連接埠").performTextReplacement("invalid")
         scrollToText("TOML 配置").assertIsNotEnabled()
-        scrollToText("儲存設定").assertIsNotEnabled()
-        scrollToText("基本設定", substring = true)
-        if (compose.onAllNodesWithText("▸ 基本設定").fetchSemanticsNodes().isNotEmpty()) {
-            compose.onNodeWithText("▸ 基本設定").performClick()
+        compose.onNodeWithText("儲存設定").assertIsNotEnabled()
+        // 分節以展開／收合語意動作表達狀態；仍收合時先展開。
+        if (SemanticsActions.Expand in scrollToText("基本設定").fetchSemanticsNode().config) {
+            compose.onNodeWithText("基本設定").click()
         }
         scrollToText("伺服器連接埠")
         assertEquals("invalid", compose.onNodeWithText("伺服器連接埠").fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
@@ -101,7 +107,7 @@ class FrpModeNavigationTest {
         val proxies = listOf("tcp", "udp", "http", "https", "stcp", "sudp", "xtcp", "tcpmux")
         proxies.forEach { type ->
             if (type != selected) {
-                compose.onAllNodesWithText(selected)[0].performScrollTo().performClick()
+                compose.onAllNodesWithText(selected)[0].performScrollTo().click()
                 compose.onNode(hasText(type) and hasAnyAncestor(isPopup())).performClick()
                 selected = type
             }
@@ -111,13 +117,13 @@ class FrpModeNavigationTest {
         val visitors = listOf("stcp", "sudp", "xtcp")
         visitors.forEach { type ->
             if (type != selected) {
-                compose.onNodeWithText(selected).performScrollTo().performClick()
+                compose.onNodeWithText(selected).performScrollTo().click()
                 compose.onNode(hasText(type) and hasAnyAncestor(isPopup())).performClick()
                 selected = type
             }
             clickText("新增訪客規則")
         }
-        clickText("▸ http-1 · HTTP")
+        clickText("http-1 · HTTP")
         scrollToText("自訂網域").performTextReplacement("first.example.invalid\nsecond.example.invalid")
         clickText("TOML 配置")
         val generated = FrpConfigDocument.parse(editorText())
@@ -125,7 +131,7 @@ class FrpModeNavigationTest {
         assertEquals(visitors, generated.rules("visitors").map { it["type"] })
         assertEquals(listOf("first.example.invalid", "second.example.invalid"), generated.rules("proxies")[2]["customDomains"])
         clickText("表單配置")
-        clickText("▸ udp-1 · UDP")
+        clickText("udp-1 · UDP")
         clickText("刪除此規則")
         clickText("TOML 配置")
         val removed = FrpConfigDocument.parse(editorText())
@@ -137,10 +143,13 @@ class FrpModeNavigationTest {
         compose.waitUntil(30_000) {
             runCatching { isEnabled().matches(scrollToText(text).fetchSemanticsNode()) }.getOrDefault(false)
         }
-        compose.onNodeWithText(text).performClick()
+        compose.onNodeWithText(text).click()
     }
 
-    private fun scrollToText(text: String, substring: Boolean = false): androidx.compose.ui.test.SemanticsNodeInteraction {
+    // 清單內容會捲到浮動工具列之下；以語意動作點按，不受疊在上方的控制項遮擋。
+    private fun SemanticsNodeInteraction.click() = performSemanticsAction(SemanticsActions.OnClick)
+
+    private fun scrollToText(text: String, substring: Boolean = false): SemanticsNodeInteraction {
         compose.waitUntil(30_000) {
             runCatching {
                 compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(text, substring = substring))

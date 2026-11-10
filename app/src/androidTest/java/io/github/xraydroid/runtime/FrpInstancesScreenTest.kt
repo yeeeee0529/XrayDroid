@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasAnyChild
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -50,7 +51,6 @@ class FrpInstancesScreenTest {
         compose.waitUntil(10_000) { FrpStore.instancesLoaded.value }
 
         fun create(name: String): String {
-            scrollToText(context.getString(R.string.frp_instance_add))
             compose.onNodeWithText(context.getString(R.string.frp_instance_add)).performClick()
             compose.onNodeWithText(context.getString(R.string.frp_instance_name)).performTextReplacement(name)
             compose.onNodeWithText(context.getString(R.string.frp_instance_create)).performClick()
@@ -66,7 +66,7 @@ class FrpInstancesScreenTest {
         assertNotEquals(firstId, secondId)
         scrollToText(firstName)
         compose.onNode(
-            hasText(context.getString(R.string.frp_instance_rename)) and
+            hasContentDescription(context.getString(R.string.frp_instance_rename)) and
                 hasAnyAncestor(hasAnyChild(hasText(firstName))),
             useUnmergedTree = true
         ).performClick()
