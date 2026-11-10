@@ -6,6 +6,7 @@
 
 - No root required; runs 3x-ui and Xray-core as a normal Android app on Android API 26+ arm64 devices.
 - The interface provides service status, start, stop, restart, lifecycle logs, and a browser entry point.
+- The native interface follows Material 3 Expressive: collapsing large top app bars, segmented lists, and a status hero. In-app back navigation supports Android predictive back and previews the previous page during the gesture.
 - Inbounds, clients, routing, and traffic statistics use the 3x-ui web panel.
 - This is a **local proxy server**, **not** a proxy tool, and does not intercept other apps' traffic.
 - MTProto / TUIC sidecars and panel / Xray self-updates are not supported yet.

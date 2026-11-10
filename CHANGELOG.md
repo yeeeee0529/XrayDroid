@@ -2,6 +2,10 @@
 
 ## 未發布
 
+- 依 Material 3 Expressive 重新設計原生介面：各頁改用可收合的大型頂端列與圖示按鈕；首頁與 frp 實例共用狀態主視覺（狀態形狀徽章、轉換中顯示載入指示器）；設定、frp 實例、網路介面與匯入選項改為分段式清單。
+- frp 實例頁的「驗證設定」「儲存設定」移至浮動工具列，操作結果顯示在工具列上方；表單／TOML 改為相連的切換按鈕；表單分節改為帶展開圖示的可收合卡片，並以展開／收合語意動作供螢幕閱讀器辨識；「新增伺服器」改為浮動動作按鈕。
+- 預測返回過場改依 Android 設計規範的全螢幕介面規格：離開頁 100% → 90%、進入頁 110% → 100%，以 35% 進度為界 fade through，插值 `(0.1, 0.1, 0, 1)`；返回層級與未存草稿確認不變。
+- 首頁服務日誌改為單一可跨行選取的區塊。
 - 新增 GitHub Actions CI：主線 push 與 PR 自動執行 `ktlintCheck`、`lintDebug`、`testDebugUnitTest`，並以新增的 `scripts/check-string-resources.py` 檢查三語系字串資源名稱與順序同步（取代人工比對）。核心相關路徑變更時另以 `build-core.sh` 重建鎖定版本的原生核心、打包 debug APK 並做 aapt2／apksigner 與 SHA-256 驗證，附上 artifact。實機儀器測試與 release 發布維持手動流程。
 - `verifyCore` 的核心庫與 geo 資產存在性檢查改為只繫於打包任務（`packageDebug`／`packageRelease`），編譯類任務與 CI 快檢不需預先建置的原生核心。
 - lint 關閉 `OldTargetApi`：CI runner 可能預裝比固定 `targetSdk` 較新的 Android 平台，與「固定已驗證版本」方針一致；本機 lint 行為不變。

@@ -6,6 +6,7 @@
 
 - 无需 root，以普通 Android App 运行 3x-ui 与 Xray-core；支持 Android API 26 以上的 arm64 设备。
 - 界面提供服务状态、启动、停止、重启、生命周期日志与浏览器入口。
+- 原生界面采用 Material 3 Expressive：可折叠的大型顶部栏、分段式列表与状态主视觉；App 内返回支持 Android predictive back（预测性返回手势），手势期间预览上一页。
 - 入站、客户端、路由与流量统计使用 3x-ui 网页面板。
 - 这是**本机代理服务器**，**不是**代理工具，不接管其他 App 的流量。
 - 目前不支持 MTProto / TUIC 边车进程与面板／Xray 自行更新。

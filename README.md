@@ -24,7 +24,7 @@ Inbounds should use a port above 1024; the service can be stopped from the app o
 
 ## Current implementation status
 
-The native interface, foreground service, version-pinned core packaging, and Android patches are implemented; validation results are in the [progress record](docs/PROGRESS.md).
+The native Material 3 Expressive interface with predictive back, foreground service, version-pinned core packaging, and Android patches are implemented; validation results are in the [progress record](docs/PROGRESS.md).
 MTProto / TUIC sidecars, Linux system administration, and core self-updates are not supported yet, and Android VPNService is not implemented.
 
 ## License

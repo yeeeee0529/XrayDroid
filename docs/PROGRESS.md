@@ -1,6 +1,19 @@
 # 進度與驗證紀錄
 
-日期：2026-11-04。
+日期：2026-11-10。
+
+## Material 3 Expressive 介面重新設計與預測返回動態規格（2026-11-10）
+
+- 依使用者要求重新設計原生 UI，並依 Android「預測返回」設計頁調整過場。範圍限 `ui/` 與測試；`runtime/`、資料格式、頁面層級（首頁 → 設定 → 出站網路／frp → 實例）、`FLAG_SECURE` 與未存草稿確認皆未改動。未新增相依套件與字串資源，三語系 `strings.xml` 未變。
+- 新增 `ui/components/`：`AppPage`（`LargeFlexibleTopAppBar` ＋ `exitUntilCollapsed`、置中限寬 760dp 的單一 `LazyColumn`、浮動疊層）、`SegmentedList`（外緣 20dp／相鄰 4dp 的分段清單、`IconBadge`、`SectionHeader`）、`StatusHero`（狀態容器色、`MaterialShapes` 徽章、轉換中 `ContainedLoadingIndicator`）、`ButtonLabel`。圖示為 22 個 Material vector drawable（`res/drawable/ic_*.xml`）。
+- 畫面：首頁與 frp 實例共用 `StatusHero`；設定、frp 實例清單、網路介面、匯入與外部權杖指令改為分段清單；frp 實例頁「驗證設定／儲存設定」移到 `HorizontalFloatingToolbar`，操作回饋顯示在工具列上方（不再位於清單內）；表單／TOML 為相連 `ToggleButton`；表單分節移除「▸／▾」文字，改為展開圖示並加上 expand／collapse 語意動作；「新增伺服器」為 `ExtendedFloatingActionButton`；返回、設定、重新偵測、重新命名、顯示／隱藏密鑰改為圖示按鈕並以原有字串作為 content description。首頁日誌改為單一 `SelectionContainer` 區塊。
+- 實測發現：`ExtendedFloatingActionButton(icon, text)` 多載的文字不在合併語意樹與 uiautomator dump 中（無障礙標籤遺失），改用內容版本多載後恢復。
+- `PredictiveBackNavigation` 改為單一進度驅動：離開頁 100% → 90%（圓角隨進度到 28dp）、進入頁 110% → 100%；離開頁 alpha 在 35% 進度前歸零，進入頁於 35% 之後淡入；縮放插值 `CubicBezierEasing(0.1, 0.1, 0, 1)`；完成 250ms 線性推進進度、取消 200ms 回復。原有 generation token、預先組合上一頁與預覽頁輸入／語意遮蔽保留。
+- 測試調整：分節標題去掉「▸ 」前綴並以 `SemanticsActions.Expand` 判斷收合；返回與重新命名改以 content description 尋找；清單內節點可能捲到浮動工具列之下，改以 `SemanticsActions.OnClick` 點按；「儲存設定」與切換失敗回饋不在清單內，直接以文字尋找。
+- 驗證（JDK 17）：`:app:ktlintFormat`、`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 通過；`scripts/check-string-resources.py` 通過。
+- 模擬器驗證（`.tools` 內的 `XrayDroid_API_36`，Android 16／arm64，headless）：`:app:connectedDebugAndroidTest -PvalidationApplicationId=io.github.xraydroid.validation` 42 項、0 failures、4 skipped（需 `scripts/frp-validation-server.py` fixture 的 frpc 轉發案例，本輪未啟動 fixture）。測試以中文文字尋找節點，模擬器系統語系為 en-US 時 `SettingsNavigationTest` 會失敗；本輪暫時將 `persist.sys.locale` 設為 zh-TW 執行，結束後已還原為 en-US 並關閉模擬器。正式套件 `io.github.xraydroid` 未安裝新版、資料未動；validation 套件已移除。
+- 截圖檢視（深色、zh-TW）：首頁、設定、出站網路以 `screencap` 檢視；frp 頁因 `FLAG_SECURE` 為全黑，改以暫時的 instrumented harness（未提交）`captureToImage` 檢視實例清單、實例頁頂部、表單展開、底部與回饋訊息；預測返回以同法擷取進度 15%／35%／70% 三格，確認離開頁縮小淡出、進入頁放大淡入。
+- 未驗證：實體裝置與實際手勢導覽（模擬器為三鍵導覽，手勢事件由測試經 `OnBackPressedDispatcher` 注入）、淺色主題與 Android 12 以下的非動態配色、橫向與平板寬度、RTL、鍵盤顯示時浮動工具列的位置、TalkBack 實際朗讀、啟動後的執行中狀態畫面（本輪未啟動核心服務）。向前導覽仍為即時切換，沒有進入動畫。
 
 ## GitHub Actions CI（2026-11-04）
 
