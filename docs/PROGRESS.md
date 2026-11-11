@@ -2,6 +2,13 @@
 
 日期：2026-11-11。
 
+## 0.5.0 覆蓋安裝至 Pixel（2026-11-11）
+
+- 依使用者要求，將 GitHub v0.5.0 的相同 release APK 以 `adb install -r` 覆蓋安裝至 Pixel 9 Pro XL／Android 17，實際回報 `Success`；保留資料，沒有卸載套件或清除 App 資料。
+- 安裝前重新核對 APK SHA256 `111f9d1fa9059ba37eeab0b1a5e5242cda5bfdedf99f9b671ff34ad6b5486662`、`apksigner verify` 與套件識別。安裝後裝置回報 `io.github.xraydroid`、versionName 0.5.0／versionCode 6，更新時間 2026-11-11 21:20:41。
+- `am start -W` 回報 COLD／Status ok，程序 PID 實際存在。擷取畫面時手機已鎖定，因此未把 Activity 啟動成功當作首頁視覺驗證；沒有解鎖手機、讀取使用者設定或後端日誌，也未額外啟動 Xray／frpc 服務。使用者解鎖後可直接開啟新版。
+- 本輪僅安裝已完成驗證的相同 APK，沒有修改應用程式或核心來源，不重跑前一節已通過的 test／lint／build；文件 `git diff --check` 通過。
+
 ## 0.5.0 回歸修正、主線合併與發行（2026-11-11）
 
 - 依使用者要求修復兩項 review 問題，修正 commit `aee01aa` 已由 `preview` fast-forward 合併到 `main` 並推送。版本升為 0.5.0／versionCode 6；[GitHub v0.5.0](https://github.com/yeeeee0529/XrayDroid/releases/tag/v0.5.0) 已實際發布，沿用既有 prerelease 形式，非 draft。遠端 `v0.5.0` 標籤指向 `aee01aaf2b8be23e4b5fbedd00b58efab7f10cdf`；GitHub API 確認 APK 與 `SHA256SUMS` 均為 uploaded，遠端 APK digest 與上述本機 SHA256 一致。
