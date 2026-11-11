@@ -2,9 +2,9 @@
 
 日期：2026-11-11。
 
-## 0.5.0 回歸修正與主線發行準備（2026-11-11）
+## 0.5.0 回歸修正、主線合併與發行（2026-11-11）
 
-- 使用者要求修復兩項 review 問題，合併 `preview` 至 `main` 並發布版本。版本升為 0.5.0／versionCode 6；此節記錄實際修復與發布前驗證，發行形式沿用既有的 GitHub prerelease。
+- 依使用者要求修復兩項 review 問題，修正 commit `aee01aa` 已由 `preview` fast-forward 合併到 `main` 並推送。版本升為 0.5.0／versionCode 6；[GitHub v0.5.0](https://github.com/yeeeee0529/XrayDroid/releases/tag/v0.5.0) 已實際發布，沿用既有 prerelease 形式，非 draft。遠端 `v0.5.0` 標籤指向 `aee01aaf2b8be23e4b5fbedd00b58efab7f10cdf`；GitHub API 確認 APK 與 `SHA256SUMS` 均為 uploaded，遠端 APK digest 與上述本機 SHA256 一致。
 - 面板重啟的速度問題：`StartAndroidTraffic` 的區域序號原本隨工作重建而歸零；改以程序共用狀態保存序號，並以同一把鎖保護取消檢查、序號遞增與原子快照寫入，避免舊工作在交接時覆寫新資料。不變更快照格式、原生 session 規則或使用者設定。
 - TCP／UDP 重複警告：恢復兩個分支的 `!errors.Is(err, errSamplingDeferred)` 過濾；首次權限拒絕與其他實際錯誤仍照常回報，五分鐘延後取樣期間不重複記錄警告。
 - Go 新增兩項回歸 test，均已觀察修正前失敗：同 session 工作重啟從序號 1 開始；三次延後取樣產生六筆 TCP／UDP 警告。修正後 Android 流量／取樣範圍的 6 項 test 與 `-race` 全數通過，相關 `go vet ./internal/web/service ./internal/web` 通過。
@@ -15,6 +15,7 @@
 - 最終 `:app:ktlintCheck :app:lintDebug :app:assembleRelease :app:assembleDebug` 通過，Android lint 無 errors／warnings；正式 release APK 為 `io.github.xraydroid`、versionCode 6／versionName 0.5.0、非 debuggable，55,719,607 bytes。`apksigner verify` 通過，簽章憑證 SHA256 與既有版本相同：`786bbe3dc5b303242dbfcaa18912cdc6bd576892bfc2301aa200d3f0356d8ce0`；APK SHA256：`111f9d1fa9059ba37eeab0b1a5e5242cda5bfdedf99f9b671ff34ad6b5486662`。
 - 交付檔案：`app/build/outputs/apk/release/app-release.apk`，發行資產為相同 APK 與 `SHA256SUMS`。frp fixture 已停止、此輪新增 adb reverse 17000／17001／18080 已移除；隔離服務已由測試停止。手機正式套件測試前沒有運作中的前景服務，本輪未覆蓋正式 APK 或啟動正式服務。
 - 已知限制仍包括實體行動網路、其他 OEM／Android 版本、長時間運作與多層出站的計數重複；模擬器／隔離測試結果不代表這些條件全數驗證。
+- 推送時自動審核允許使用者要求的主線發行，但拒絕額外推送 `preview`；已依建議只推送 `main`，未改寫歷史或重試推送該額外分支。`origin/preview` 因此仍停在原本的 `e45b128`，本機 `preview` 保留已合併的 `aee01aa`。發布時 CI run `43027348351` 與 core run `43027348850` 尚在執行，不將遠端結果列為已通過。
 - 這次只更新核心修補、回歸測試、版本及文件；沒有修改使用者資料庫、讀取後端運作日誌、覆蓋手機正式 APK 或加入新的相依套件。`upstream/` 的 Go 修改以補丁交付。
 
 ## 原生代理出站速度（2026-11-11）
