@@ -2,6 +2,13 @@
 
 日期：2026-11-11。
 
+## Preview 覆蓋安裝至 Pixel（2026-11-11）
+
+- 依使用者要求，將 `ef904f1` 對應的 preview debug APK 以 `adb install -r` 覆蓋安裝至 Pixel 9 Pro XL（Android 17），回報 `Success`；採保留資料方式，未清除 App 資料、未卸載正式套件。APK SHA256 仍為 `da0fffb6b10659d78b5f23b58c21e386cf70136d3ba0156149a16ea7c8d890ba`，套件 `io.github.xraydroid`、versionName 0.4.0／versionCode 5，安裝時間為裝置回報的 2026-11-11 15:42:39。
+- 開啟原生首頁，實際顯示 3x-ui 3.11.0 與 Xray-core 26.11.9；點擊「啟動服務」後，透過本輪臨時 adb forward 確認 `http://127.0.0.1:2053/` 回應 HTTP 200／`text/html`。驗證後已移除該轉送。
+- 裝置之後顯示既有 frp 實例已登入伺服器、代理啟用 1／1；這是核心狀態回報，不視為實際轉發資料驗證。未改寫或讀取 frp 憑證、使用者資料庫與後端日誌。App 保持開啟，服務交由使用者繼續試用。
+- 本輪是安裝與啟動確認，未再對正式套件建立測試入站或變更既有代理設定；協定傳輸與完整生命週期結果沿用下節的隔離套件驗證。
+
 ## Preview 核心基準更新（2026-11-11）
 
 - 依使用者確認改在 `preview` 分支實作，將 3x-ui v3.8.5 → v3.11.0、Xray v26.6.27 → v26.11.9、frpc v0.71.0 → v0.72.0。固定 commit 分別為 `c621ba9014a6aa21fd7c9ecf45655e44e24ebf13`、`676eaf66f8f05d4d558ee7a74b4736623d3feeb9`、`bafec21abce5f91ae4a05b4bd19c55543c263128`。App 仍為 0.4.0／versionCode 5，沒有建立新版標籤或發布 release。
