@@ -63,7 +63,7 @@ index 62ce7d1..e8ad51c 100644
  	if !acquireUpdateSlot(runID) {
  		return 0, fmt.Errorf("a panel update is already in progress")
 diff --git a/internal/web/service/server.go b/internal/web/service/server.go
-index 6a6a15b..a20b644 100644
+index 6a6a15b..408fec5 100644
 --- a/internal/web/service/server.go
 +++ b/internal/web/service/server.go
 @@ -152,6 +152,9 @@ type ServerService struct {
@@ -206,14 +206,16 @@ index 6a6a15b..a20b644 100644
  
  	// TCP/UDP connections
 -	status.TcpCount, err = sys.GetTCPCount()
+-	if err != nil {
 +	status.TcpCount, err = sampleAndroidMetric(&s.androidSampling, platform, "tcp", sys.GetTCPCount)
- 	if err != nil {
++	if err != nil && !errors.Is(err, errSamplingDeferred) {
  		logger.Warning("get tcp connections failed:", err)
  	}
  
 -	status.UdpCount, err = sys.GetUDPCount()
+-	if err != nil {
 +	status.UdpCount, err = sampleAndroidMetric(&s.androidSampling, platform, "udp", sys.GetUDPCount)
- 	if err != nil {
++	if err != nil && !errors.Is(err, errSamplingDeferred) {
  		logger.Warning("get udp connections failed:", err)
  	}
  
@@ -469,10 +471,10 @@ index 0000000..a095098
 +}
 diff --git a/internal/web/service/server_sampling_test.go b/internal/web/service/server_sampling_test.go
 new file mode 100644
-index 0000000..886bdfe
+index 0000000..8c5074b
 --- /dev/null
 +++ b/internal/web/service/server_sampling_test.go
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,320 @@
 +package service
 +
 +import (
@@ -482,11 +484,47 @@ index 0000000..886bdfe
 +	"net/http"
 +	"net/http/httptest"
 +	"os"
++	"strings"
 +	"sync"
 +	"sync/atomic"
 +	"testing"
 +	"time"
++
++	"github.com/mhsanaei/3x-ui/v3/internal/logger"
 +)
++
++func TestAndroidDeferredConnectionCountsDoNotRepeatWarnings(t *testing.T) {
++	initFlowTestDB(t)
++	// 只計算此 Go test 程序產生的固定診斷，不讀取裝置或後端日誌檔。
++	countWarnings := func() int {
++		count := 0
++		for _, message := range logger.GetLogs(10240, "WARNING") {
++			if strings.Contains(message, errSamplingDeferred.Error()) &&
++				(strings.Contains(message, "get tcp connections failed:") || strings.Contains(message, "get udp connections failed:")) {
++				count++
++			}
++		}
++		return count
++	}
++	before := countWarnings()
++	s := &ServerService{
++		androidPublicIPs: publicIPCache{resolved: true},
++		cpuMetadata:      cpuMetadataCache{nextRefresh: time.Now().Add(time.Hour)},
++		androidSampling: androidSamplingCache{denied: map[string]time.Time{
++			"tcp": time.Now().Add(androidDeniedMetricRetryTTL),
++			"udp": time.Now().Add(androidDeniedMetricRetryTTL),
++		}},
++	}
++	for range 3 {
++		status := s.getStatus(nil, "android")
++		if status.TcpCount != 0 || status.UdpCount != 0 {
++			t.Fatalf("deferred connection counts = %d, %d", status.TcpCount, status.UdpCount)
++		}
++	}
++	if count := countWarnings() - before; count != 0 {
++		t.Fatalf("deferred connection metrics emitted %d warnings, want zero", count)
++	}
++}
 +
 +func setPublicIPTestServices(t *testing.T, ipv4, ipv6 []string) {
 +	t.Helper()
@@ -990,10 +1028,10 @@ index a2fbdce..fc15227 100644
  
 diff --git a/internal/web/service/android_traffic.go b/internal/web/service/android_traffic.go
 new file mode 100644
-index 0000000..785c728
+index 0000000..99c3ff6
 --- /dev/null
 +++ b/internal/web/service/android_traffic.go
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,170 @@
 +package service
 +
 +import (
@@ -1002,12 +1040,18 @@ index 0000000..785c728
 +	"os"
 +	"runtime"
 +	"strings"
++	"sync"
 +	"time"
 +
 +	"github.com/mhsanaei/3x-ui/v3/internal/util/json_util"
 +	"github.com/mhsanaei/3x-ui/v3/internal/xray"
 +	statsService "github.com/xtls/xray-core/app/stats/command"
 +)
++
++var androidTrafficPublication struct {
++	sync.Mutex
++	sequence int64
++}
 +
 +type androidTrafficSnapshot struct {
 +	Session  string  `json:"session"`
@@ -1122,42 +1166,52 @@ index 0000000..785c728
 +	if runtime.GOOS != "android" || file == "" || session == "" {
 +		return
 +	}
-+	go func() {
-+		ticker := time.NewTicker(time.Second)
-+		defer ticker.Stop()
-+		var meter androidTrafficMeter
-+		var sequence int64
-+		for {
-+			select {
-+			case <-ctx.Done():
-+				return
-+			case <-ticker.C:
-+				process, counters, err := queryAndroidOutboundTraffic(ctx)
-+				snapshot := androidTrafficSnapshot{State: "unavailable"}
-+				if err == nil {
-+					snapshot = meter.sample(process, counters, time.Now())
-+				} else {
-+					meter = androidTrafficMeter{}
-+				}
-+				if ctx.Err() != nil {
-+					return
-+				}
-+				sequence++
-+				snapshot.Session, snapshot.Sequence = session, sequence
-+				_ = writeAndroidTraffic(file, snapshot)
++	go runAndroidTraffic(ctx, file, session)
++}
++
++func runAndroidTraffic(ctx context.Context, file, session string) {
++	ticker := time.NewTicker(time.Second)
++	defer ticker.Stop()
++	var meter androidTrafficMeter
++	for {
++		select {
++		case <-ctx.Done():
++			return
++		case <-ticker.C:
++			process, counters, err := queryAndroidOutboundTraffic(ctx)
++			snapshot := androidTrafficSnapshot{State: "unavailable"}
++			if err == nil {
++				snapshot = meter.sample(process, counters, time.Now())
++			} else {
++				meter = androidTrafficMeter{}
 +			}
++			snapshot.Session = session
++			publishAndroidTraffic(ctx, file, snapshot)
 +		}
-+	}()
++	}
++}
++
++func publishAndroidTraffic(ctx context.Context, file string, snapshot androidTrafficSnapshot) {
++	// 同一個程序的序號跨面板重啟保留；交接時不讓已取消的工作覆寫新快照。
++	androidTrafficPublication.Lock()
++	defer androidTrafficPublication.Unlock()
++	if ctx.Err() != nil {
++		return
++	}
++	androidTrafficPublication.sequence++
++	snapshot.Sequence = androidTrafficPublication.sequence
++	_ = writeAndroidTraffic(file, snapshot)
 +}
 diff --git a/internal/web/service/android_traffic_test.go b/internal/web/service/android_traffic_test.go
 new file mode 100644
-index 0000000..6d6154a
+index 0000000..642126b
 --- /dev/null
 +++ b/internal/web/service/android_traffic_test.go
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,135 @@
 +package service
 +
 +import (
++	"context"
 +	"encoding/json"
 +	"os"
 +	"path/filepath"
@@ -1167,6 +1221,44 @@ index 0000000..6d6154a
 +	"github.com/mhsanaei/3x-ui/v3/internal/util/json_util"
 +	"github.com/mhsanaei/3x-ui/v3/internal/xray"
 +)
++
++func TestAndroidTrafficSequenceSurvivesSamplerRestart(t *testing.T) {
++	file := filepath.Join(t.TempDir(), "traffic.json")
++	start := func() context.CancelFunc {
++		ctx, cancel := context.WithCancel(context.Background())
++		done := make(chan struct{})
++		go func() {
++			defer close(done)
++			runAndroidTraffic(ctx, file, "same-session")
++		}()
++		stop := func() { cancel(); <-done }
++		t.Cleanup(stop)
++		return stop
++	}
++	read := func(after int64) androidTrafficSnapshot {
++		t.Helper()
++		deadline := time.Now().Add(4 * time.Second)
++		for time.Now().Before(deadline) {
++			data, err := os.ReadFile(file)
++			var snapshot androidTrafficSnapshot
++			if err == nil && json.Unmarshal(data, &snapshot) == nil && snapshot.Sequence > 0 && snapshot.Sequence != after {
++				return snapshot
++			}
++			time.Sleep(10 * time.Millisecond)
++		}
++		t.Fatalf("sampler did not advance beyond sequence %d", after)
++		return androidTrafficSnapshot{}
++	}
++	stop := start()
++	before := read(0)
++	before = read(before.Sequence)
++	stop()
++	start()
++	after := read(before.Sequence)
++	if after.Session != before.Session || after.Sequence != before.Sequence+1 {
++		t.Fatalf("restarted sampler = %+v; previous = %+v", after, before)
++	}
++}
 +
 +func TestAndroidTrafficRatesResetAndRecover(t *testing.T) {
 +	var meter androidTrafficMeter

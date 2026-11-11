@@ -22,6 +22,11 @@ internal class PanelManagementProbe {
     private val cookies = CookieManager(null, CookiePolicy.ACCEPT_ALL)
     private var csrf = ""
 
+    fun restartPanel() {
+        login()
+        request("/panel/api/setting/restartPanel", JSONObject())
+    }
+
     fun verifyLoginAndVlessInbound(context: Context) {
         login()
         val disk = awaitDiskStatus()

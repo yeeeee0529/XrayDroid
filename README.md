@@ -24,7 +24,7 @@ The dashboard shows live Xray outbound upload/download rates, refreshed about on
 
 ## Current implementation status
 
-The `preview` baseline pins 3x-ui v3.11.0, Xray-core v26.11.9, and frpc v0.72.0. Protocol validation covers Shadowsocks AEAD / SS2022, VLESS + REALITY + Vision, and Hysteria 2; observed results and limitations are recorded below.
+The v0.5.0 baseline pins 3x-ui v3.11.0, Xray-core v26.11.9, and frpc v0.72.0. Protocol validation covers Shadowsocks AEAD / SS2022, VLESS + REALITY + Vision, and Hysteria 2; observed results and limitations are recorded below.
 
 The native Material 3 Expressive interface with predictive back, foreground service, version-pinned core packaging, and Android patches are implemented; validation results are in the [progress record](docs/PROGRESS.md).
 MTProto / TUIC inbounds, Linux system administration, and core self-updates are not supported yet, and Android VPNService is not implemented.

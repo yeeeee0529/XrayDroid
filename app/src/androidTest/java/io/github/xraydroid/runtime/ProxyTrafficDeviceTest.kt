@@ -11,6 +11,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
+import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -19,6 +20,40 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ProxyTrafficDeviceTest {
+    @Test
+    fun panelRestartKeepsTrafficSequenceAdvancing() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        check(
+            context.packageName == "io.github.xraydroid.validation"
+        ) { "Traffic verification requires the isolated validation application ID" }
+        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val file = RuntimeLayout(context).traffic
+        fun snapshot(): JSONObject? = runCatching { JSONObject(file.readText()) }.getOrNull()
+        try {
+            XuiService.dispatch(context, XuiService.ACTION_START)
+            await("Service must start") { ServerStore.state.value.phase == ServerPhase.RUNNING }
+            await("Sampler must establish a baseline before panel restart") {
+                snapshot()?.optLong("sequence", 0)?.let { it >= 8 } == true && ServerStore.state.value.traffic.status == TrafficStatus.READY
+            }
+            val before = requireNotNull(snapshot())
+            PanelManagementProbe().restartPanel()
+            await("Restarted panel must publish a new sampling baseline", 20000) {
+                val current = snapshot()
+                current?.optString("state") == "waiting" && current.optLong("sequence") != before.getLong("sequence")
+            }
+            val after = requireNotNull(snapshot())
+            assertEquals("Panel restart must keep the native service session", before.getString("session"), after.getString("session"))
+            assertTrue("Panel restart must not reset the traffic sequence", after.getLong("sequence") > before.getLong("sequence"))
+            await("Native transfer rates must recover after panel restart", 5000) {
+                ServerStore.state.value.traffic.status == TrafficStatus.READY
+            }
+            assertEquals(ServerPhase.RUNNING, ServerStore.state.value.phase)
+        } finally {
+            XuiService.dispatch(context, XuiService.ACTION_STOP)
+            await("Service must stop") { ServerStore.state.value.phase == ServerPhase.STOPPED }
+        }
+    }
+
     @Test
     fun liveOutboundRatesFollowProxyTransfersAndClearAfterStop() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

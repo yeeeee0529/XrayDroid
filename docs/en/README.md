@@ -14,7 +14,7 @@
 
 ## Core baseline
 
-The `preview` branch pins 3x-ui v3.11.0, Xray-core v26.11.9, and frpc v0.72.0. Sources are stored in versioned directories under `upstream/`, preserving existing checkouts. Xray downloads are cached by version and verified against pinned SHA256 hashes.
+Version 0.5.0 pins 3x-ui v3.11.0, Xray-core v26.11.9, and frpc v0.72.0. Sources are stored in versioned directories under `upstream/`, preserving existing checkouts. Xray downloads are cached by version and verified against pinned SHA256 hashes.
 
 Android retains `admin` / `admin` for the first login on a fresh database; existing accounts are left intact. Upstream random first-login credentials are not written to Android logs.
 
@@ -52,7 +52,7 @@ Core updates require rebuilding and installing the APK.
 
 The dashboard shows aggregate Xray outbound upload and download speeds, refreshed about once per second. Upload is traffic sent from Xray to the destination; download is traffic returned from the destination. Units use bytes per second (B/s, KB/s, MB/s, GB/s; 1 KB = 1,000 bytes). No cumulative total is displayed.
 
-Values come from Xray outbound counters, independently of Android interface statistics, frpc traffic, and panel login. Counter resets, core restarts, and long sampling gaps establish a new baseline. Idle traffic shows zero; startup, unavailable statistics, and a stopped service show a status instead of retaining old rates. The runtime configuration enables outbound statistics without modifying the stored panel template; existing panel totals and quotas keep their own sampling baseline. Chained outbounds may count the same payload at multiple outbound stages; these values are logical outbound traffic, not physical interface throughput.
+Values come from Xray outbound counters, independently of Android interface statistics, frpc traffic, and panel login. Counter resets, core restarts, and long sampling gaps establish a new baseline. Restarting the panel preserves snapshot sequence progression so native rates resume after sampling. Idle traffic shows zero; startup, unavailable statistics, and a stopped service show a status instead of retaining old rates. The runtime configuration enables outbound statistics without modifying the stored panel template; existing panel totals and quotas keep their own sampling baseline. Chained outbounds may count the same payload at multiple outbound stages; these values are logical outbound traffic, not physical interface throughput.
 
 ## About outbound network
 

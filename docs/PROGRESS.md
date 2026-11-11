@@ -2,6 +2,21 @@
 
 日期：2026-11-11。
 
+## 0.5.0 回歸修正與主線發行準備（2026-11-11）
+
+- 使用者要求修復兩項 review 問題，合併 `preview` 至 `main` 並發布版本。版本升為 0.5.0／versionCode 6；此節記錄實際修復與發布前驗證，發行形式沿用既有的 GitHub prerelease。
+- 面板重啟的速度問題：`StartAndroidTraffic` 的區域序號原本隨工作重建而歸零；改以程序共用狀態保存序號，並以同一把鎖保護取消檢查、序號遞增與原子快照寫入，避免舊工作在交接時覆寫新資料。不變更快照格式、原生 session 規則或使用者設定。
+- TCP／UDP 重複警告：恢復兩個分支的 `!errors.Is(err, errSamplingDeferred)` 過濾；首次權限拒絕與其他實際錯誤仍照常回報，五分鐘延後取樣期間不重複記錄警告。
+- Go 新增兩項回歸 test，均已觀察修正前失敗：同 session 工作重啟從序號 1 開始；三次延後取樣產生六筆 TCP／UDP 警告。修正後 Android 流量／取樣範圍的 6 項 test 與 `-race` 全數通過，相關 `go vet ./internal/web/service ./internal/web` 通過。
+- 完整 3x-ui `go test ./...` 通過（51 個有測試套件，使用 Go 內建 ZONEINFO）。首輪因來源目錄內既有 `.core-cache/go-mod` 被上游來源掃描 test 誤認為產品程式而失敗；已將該快取保留並移至專案 `.core-cache/3xui-review-cache-20261111`，沒有刪除資料或放寬上游來源掃描規則，重跑完整 suite 通過。
+- 完整 `scripts/build-core.sh` 通過，包含三個 Android arm64 核心與上游前端；3x-ui ELF LOAD 段 16 KB 對齊。Go 修改檔案 `gofmt -l` 為空，補丁乾淨固定來源套用及目前來源反向檢查通過，`git diff --check` 通過。
+- JDK 17 的 `:app:ktlintFormat`、`:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 通過；34 個 JVM test 全數通過，三語系各 352 筆名稱與順序同步。裝置測試使用專案內 `ANDROID_USER_HOME`／暫存目錄與 Kotlin in-process 編譯，以避免沙盒對 UTP 暫存檔及 daemon 通訊的限制；正式發行 APK 不使用測試的簽章環境覆寫。
+- Pixel 9 Pro XL／Android 17 隔離套件的 2 項代理速度 test 通過，包含實際不對稱上下傳、閒置歸零，以及透過 `/panel/api/setting/restartPanel` 真正重新啟動網頁面板：驗證 session 不變、序號持續遞增且原生速度恢復。完整裝置 suite 的 XML 報告為 51 項：50 通過、1 行動網路不可用略過、0 failures／0 errors（305 秒）。Gradle 主控台結尾顯示 52 項，但實際 test case 與 XML 總數均為 51，以 XML 為準。
+- 最終 `:app:ktlintCheck :app:lintDebug :app:assembleRelease :app:assembleDebug` 通過，Android lint 無 errors／warnings；正式 release APK 為 `io.github.xraydroid`、versionCode 6／versionName 0.5.0、非 debuggable，55,719,607 bytes。`apksigner verify` 通過，簽章憑證 SHA256 與既有版本相同：`786bbe3dc5b303242dbfcaa18912cdc6bd576892bfc2301aa200d3f0356d8ce0`；APK SHA256：`111f9d1fa9059ba37eeab0b1a5e5242cda5bfdedf99f9b671ff34ad6b5486662`。
+- 交付檔案：`app/build/outputs/apk/release/app-release.apk`，發行資產為相同 APK 與 `SHA256SUMS`。frp fixture 已停止、此輪新增 adb reverse 17000／17001／18080 已移除；隔離服務已由測試停止。手機正式套件測試前沒有運作中的前景服務，本輪未覆蓋正式 APK 或啟動正式服務。
+- 已知限制仍包括實體行動網路、其他 OEM／Android 版本、長時間運作與多層出站的計數重複；模擬器／隔離測試結果不代表這些條件全數驗證。
+- 這次只更新核心修補、回歸測試、版本及文件；沒有修改使用者資料庫、讀取後端運作日誌、覆蓋手機正式 APK 或加入新的相依套件。`upstream/` 的 Go 修改以補丁交付。
+
 ## 原生代理出站速度（2026-11-11）
 
 - 依使用者確認，在原生首頁服務狀態下方加入「代理出站速度」，分別顯示上傳／下載；約每秒更新，自動換算 B/s、KB/s、MB/s、GB/s（十進位），不顯示累計流量。沿用 Material 3 Expressive 的 `SectionHeader`、`SegmentedColumn`、`SegmentedItem` 與 `IconBadge`，沒有新增相依套件。
