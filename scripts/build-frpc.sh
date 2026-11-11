@@ -2,9 +2,9 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-FRP_VERSION="v0.71.0"
-FRP_COMMIT="4a23aa181c1d7e28eecaa8216024ed753b9d27c8"
-FRP_SOURCE="$PROJECT_ROOT/upstream/frp"
+FRP_VERSION="v0.72.0"
+FRP_COMMIT="bafec21abce5f91ae4a05b4bd19c55543c263128"
+FRP_SOURCE="$PROJECT_ROOT/upstream/frp-$FRP_VERSION"
 CACHE_DIR="$PROJECT_ROOT/.core-cache"
 ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-/opt/homebrew/share/android-ndk}"
 
@@ -13,7 +13,7 @@ if [[ ! -d "$FRP_SOURCE/.git" ]]; then
     git clone --branch "$FRP_VERSION" --depth 1 https://github.com/fatedier/frp.git "$FRP_SOURCE"
 fi
 if [[ "$(git -C "$FRP_SOURCE" rev-parse HEAD)" != "$FRP_COMMIT" ]]; then
-    echo "Unexpected frp source commit; use the pinned v0.71.0 checkout." >&2
+    echo "Unexpected frp source commit; use the pinned v0.72.0 checkout." >&2
     exit 1
 fi
 if git -C "$FRP_SOURCE" apply --check "$PROJECT_ROOT/patches/frp-android.patch" 2>/dev/null; then

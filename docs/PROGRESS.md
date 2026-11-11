@@ -1,6 +1,34 @@
 # 進度與驗證紀錄
 
-日期：2026-11-10。
+日期：2026-11-11。
+
+## Preview 核心基準更新（2026-11-11）
+
+- 依使用者確認改在 `preview` 分支實作，將 3x-ui v3.8.5 → v3.11.0、Xray v26.6.27 → v26.11.9、frpc v0.71.0 → v0.72.0。固定 commit 分別為 `c621ba9014a6aa21fd7c9ecf45655e44e24ebf13`、`676eaf66f8f05d4d558ee7a74b4736623d3feeb9`、`bafec21abce5f91ae4a05b4bd19c55543c263128`。App 仍為 0.4.0／versionCode 5，沒有建立新版標籤或發布 release。
+- 上游來源改放 `upstream/{3x-ui-v3.11.0,Xray-core-v26.11.9,frp-v0.72.0}`，舊目錄與修補內容保留。Xray zip／dgst 快取依版本命名，SHA256 分別固定為 `edcefc25b9b3195b11e18624c8269a969d6aabc39c6298a9a5ab29de15d46f3b`、`e6b8fb07f1eceb36641badf845bcf880cdd93d21802f662be6aa922e01933e16`。
+- 移植三份 Android 補丁，保留原生執行路徑、父程序死亡清理、獨立多實例、網路綁定／DNS、不回退與統計採樣。3x-ui 沿用新版非 Android 的公開 IP 低頻更新，Android 保留不等待外部 IP 的採樣方式；TUIC 已由上游改為嵌入式，仍明確停用 Android 的未驗證 TUIC 入站。MTProto 與自動更新繼續停用。
+- 3x-ui 上游改為新資料庫首次建立隨機帳密且僅寫後端日誌；Android 保留既有首次登入 `admin`／`admin`，已有使用者時不改寫，也不輸出首次帳密。正式套件的資料庫與設定未讀取或覆寫；真機驗證僅使用 `io.github.xraydroid.validation`。
+- 建置需求與 CI 更新至 Go 1.27.3／Node.js 26；兩條 workflow 的 push 範圍加入 `preview`。四份 README、第三方聲明與變更紀錄同步。
+
+### 已觀察到的檢查結果
+
+- 完整 `scripts/build-core.sh`：通過，包含兩個上游網頁前端、三個 Android arm64 核心、官方 Xray SHA256／模組驗證，以及主機 frpc／frps。三個 ELF 的 LOAD 段均為 16 KB 對齊。三份補丁的乾淨來源套用與現有來源反向檢查皆通過；修改 Go 檔案的 `gofmt -l` 為空。
+- JDK 17 下 `:app:ktlintFormat :app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:compileDebugAndroidTestKotlin`：通過。29 個 JVM test 全通過；Android lint 為 0 errors／0 warnings／1 既有 hint；340 筆三語系字串名稱與順序同步。新增 Python 腳本的語法、Ruff lint／format 與 shell 腳本語法均檢查。
+- 3x-ui 前端 `npm run typecheck`、`npm run lint`、`npm run format:check`：通過，前端來源未修改。
+- 3x-ui 完整 `go test ./...`：通過；使用 Go 隨附的 `ZONEINFO=/opt/homebrew/Cellar/go/1.27.3/libexec/lib/time/zoneinfo.zip`。首輪系統時區資料在 Havana 2026 年 DST 邊界與上游固定預期不同，改用 Go 時區資料後該 test 及完整 suite 通過。Android 統計 test 已調整為明確測試 Android 路徑。相關套件 `go vet` 通過，Android 採樣的 7 項指定 race test 通過。
+- Xray 完整 `go test -p 1 ./...`：通過。首輪補齊 `resources/{geoip,geosite}.dat`，移除干擾 `TestGetAssetLocation` 的全域資產環境變數，並為 Darwin 程序查詢測試提供沙盒外權限；初次 `TestCommanderListenConfigurationItem` 逾時單獨重跑通過。第二輪一般並行完整 suite 的 `TestShadowsocksAES128GCMUDPMux` 發生一次 UDP 逾時；修補版與乾淨官方版各連跑五次通過，降低套件並行後完整 suite 通過。相關套件 `go vet` 通過。
+- frp 的 assets／cmd／client／server／pkg 全部 Go test 通過；一般 `test/e2e` suite 通過（491 秒），與 v0.71.0 的雙向 `test/e2e/compatibility` suite 通過。相關套件 `go vet` 與 App 狀態／Android 連接器指定 race test 通過。首輪缺少 web dist、主機 bin 與 compatibility baseline 參數，補齊後分項通過。
+- 新增 `CoreProtocolTest`：Pixel 9 Pro XL／Android 17、App UID、打包核心實際執行，Shadowsocks `aes-128-gcm`、SS2022 `2022-blake3-aes-128-gcm`、VLESS＋RAW＋REALITY＋`xtls-rprx-vision`、Hysteria 2 四項全部通過，均驗證 32 KiB TCP／1 KiB UDP 內容與程序存活。憑證、REALITY 金鑰與設定皆為測試即時產生並清理，不讀取使用者設定或後端日誌。
+- 真機完整隔離 suite：48 項、39 通過、9 因網路條件略過、0 failures／0 errors。使用者解鎖並連上 Wi-Fi 後，補跑 `FrpNetworkSelectionTest`、`NetworkBindingTest`、`NetworkSwitchLifecycleTest`：13 項、12 通過、僅行動網路 1 項略過、0 failures／0 errors。兩輪合計覆蓋 47 個不同通過案例，剩 1 個行動網路案例。包含面板登入／VLESS 管理、背景／崩潰清理／重新啟動／停止、frp 表單各協定驗證、TCP／UDP 轉發／重連／多實例、指定 Wi-Fi／失效等待／恢復與不回退。
+- `scripts/verify-hysteria-interop.py`：主機 Xray v26.11.9 與官方 Hysteria 2 v2.13.0 的「官方 client → Xray server」與「Xray client → 官方 server」TCP／UDP 全通過。Hysteria 工具僅位於忽略的主機快取，SHA256 為 `c8c3589239ce4ecf335c07a3f6ec11b3ef8fbdfe9e5a5ea0ef8ba8ce50d2bb90`；未封裝至 APK，未新增 App 相依套件。
+- 測試結束後以未覆寫 application ID 的 `:app:assembleDebug` 重新產生交付 APK，`aapt2` 確認 `io.github.xraydroid`、versionCode 5／versionName 0.4.0；`apksigner verify` 通過。檔案 `app/build/outputs/apk/debug/app-debug.apk`，SHA256 `da0fffb6b10659d78b5f23b58c21e386cf70136d3ba0156149a16ea7c8d890ba`。
+- 裝置測試後已停止 frp fixture 並移除本輪 17000／17001／18080 三個 adb reverse；暫時保持螢幕開啟的設定已還原為原本的 `0`。正式套件測試前曾停止以釋放 2053，測試後已開啟原 App 首頁，沒有安裝 preview 覆蓋正式套件。
+
+### 限制與未驗證範圍
+
+- 3x-ui 額外以寬鬆名稱篩選執行 race test 時，上游 `TestPublicIPStatusUsesRefreshedAddressWithoutBlocking` 在 Go `synctest` 中出現 lumberjack 日誌背景工作不結束的 deadlock；乾淨官方 v3.11.0 在相同指定 race 執行亦重現。本輪沒有修改此上游測試／日誌架構，也不將此額外檢查列為通過。正常完整 Go suite 與 Android 採樣指定 race test 均已通過。
+- 尚未驗證行動網路、不同 OEM／Android 版本、長時間運作、所有 SS 加密方式、所有 REALITY 指紋及 sing-box 等其他用戶端；Hysteria 2 的 Brutal 速率協商、混淆、port hopping 與壓力測試亦不在本輪通過範圍。主機官方 Hysteria 互通不取代 Android 上所有第三方用戶端的實測。
+- 這是 preview 分支更新，未發布 release、未建立 tag，GitHub CI 結果須以遠端實際執行為準。
 
 ## 0.4.0 版本與發布（2026-11-10）
 

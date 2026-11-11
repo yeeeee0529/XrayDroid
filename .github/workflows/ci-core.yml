@@ -5,7 +5,7 @@ name: CI core build
 
 on:
   push:
-    branches: [main]
+    branches: [main, preview]
     paths:
       - "patches/**"
       - "scripts/build-core.sh"
@@ -49,10 +49,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Node.js 24
+      - name: Set up Node.js 26
         uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: "26"
 
       - name: Set up Go 1.27.3
         uses: actions/setup-go@v5

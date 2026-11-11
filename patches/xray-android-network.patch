@@ -13,10 +13,10 @@ index 6d1cff7..eebba58 100644
  			return err
  		}
 diff --git a/app/router/webhook.go b/app/router/webhook.go
-index 0c7a3e4..843672c 100644
+index cac82ee..3b953ab 100644
 --- a/app/router/webhook.go
 +++ b/app/router/webhook.go
-@@ -11,6 +11,7 @@ import (
+@@ -12,6 +12,7 @@ import (
  	"time"
  
  	"github.com/xtls/xray-core/common/errors"
@@ -24,7 +24,7 @@ index 0c7a3e4..843672c 100644
  	"github.com/xtls/xray-core/common/utils"
  	"github.com/xtls/xray-core/features/routing"
  	routing_session "github.com/xtls/xray-core/features/routing/session"
-@@ -60,6 +61,13 @@ func NewWebhookNotifier(cfg *WebhookConfig) (*WebhookNotifier, error) {
+@@ -62,6 +63,13 @@ func NewWebhookNotifier(cfg *WebhookConfig) (*WebhookNotifier, error) {
  		done: make(chan struct{}),
  	}
  
@@ -38,132 +38,6 @@ index 0c7a3e4..843672c 100644
  	if socketPath != "" {
  		dialAddr := utils.ResolveSocketPath(socketPath)
  		h.client.Transport = &http.Transport{
-diff --git a/features/dns/localdns/client.go b/features/dns/localdns/client.go
-index b00febb..87834c8 100644
---- a/features/dns/localdns/client.go
-+++ b/features/dns/localdns/client.go
-@@ -32,7 +32,7 @@ func (*Client) Close() error { return nil }
- func (c *Client) LookupIP(host string, option dns.IPOption) ([]net.IP, uint32, error) {
- 	var ips []net.IP
- 	var err error
--	if len(internet.Controllers) > 0 {
-+	if len(internet.Controllers) > 0 && !net.AndroidNetworkSelected() {
- 		ips, err = c.r.LookupIP(context.Background(), "ip", host)
- 	} else {
- 		ips, err = net.LookupIP(host)
-diff --git a/proxy/trojan/server.go b/proxy/trojan/server.go
-index d5979e5..b5d2356 100644
---- a/proxy/trojan/server.go
-+++ b/proxy/trojan/server.go
-@@ -453,7 +453,7 @@ func (s *Server) fallback(ctx context.Context, err error, sessionPolicy policy.S
- 
- 	var conn net.Conn
- 	if err := retry.ExponentialBackoff(5, 100).On(func() error {
--		var dialer net.Dialer
-+		dialer := net.Dialer{Control: net.NetworkControl("", nil)}
- 		conn, err = dialer.DialContext(ctx, fb.Type, fb.Dest)
- 		if err != nil {
- 			return err
-diff --git a/proxy/vless/inbound/inbound.go b/proxy/vless/inbound/inbound.go
-index 2d10a00..7788e48 100644
---- a/proxy/vless/inbound/inbound.go
-+++ b/proxy/vless/inbound/inbound.go
-@@ -418,7 +418,7 @@ func (h *Handler) Process(ctx context.Context, network net.Network, connection s
- 
- 			var conn net.Conn
- 			if err := retry.ExponentialBackoff(5, 100).On(func() error {
--				var dialer net.Dialer
-+				dialer := net.Dialer{Control: net.NetworkControl("", nil)}
- 				conn, err = dialer.DialContext(ctx, fb.Type, fb.Dest)
- 				if err != nil {
- 					return err
-diff --git a/transport/internet/finalmask/xicmp/client.go b/transport/internet/finalmask/xicmp/client.go
-index 3777bd8..84938a9 100644
---- a/transport/internet/finalmask/xicmp/client.go
-+++ b/transport/internet/finalmask/xicmp/client.go
-@@ -17,6 +17,7 @@ import (
- 
- 	"github.com/xtls/xray-core/common"
- 	"github.com/xtls/xray-core/common/errors"
-+	xnet "github.com/xtls/xray-core/common/net"
- 	"github.com/xtls/xray-core/transport/internet/finalmask"
- 	"golang.org/x/net/icmp"
- 	"golang.org/x/net/ipv4"
-@@ -50,6 +51,9 @@ type xicmpConnClient struct {
- }
- 
- func NewConnClient(c *Config, raw net.PacketConn) (net.PacketConn, error) {
-+	if xnet.AndroidNetworkSelected() {
-+		return nil, errors.New("xicmp is unsupported with a selected Android network")
-+	}
- 	var icmp4, icmp6 *icmp.PacketConn
- 	var err4, err6 error
- 	if c.DGRAM {
-diff --git a/transport/internet/reality/config.go b/transport/internet/reality/config.go
-index 0b26621..6d8ca72 100644
---- a/transport/internet/reality/config.go
-+++ b/transport/internet/reality/config.go
-@@ -2,8 +2,8 @@ package reality
- 
- import (
- 	"context"
-+	"github.com/xtls/xray-core/common/net"
- 	"io"
--	"net"
- 	"os"
- 	"time"
- 
-@@ -14,7 +14,7 @@ import (
- )
- 
- func (c *Config) GetREALITYConfig() *reality.Config {
--	var dialer net.Dialer
-+	dialer := net.Dialer{Control: net.NetworkControl("", nil)}
- 	config := &reality.Config{
- 		DialContext: dialer.DialContext,
- 
-diff --git a/transport/internet/system_dialer.go b/transport/internet/system_dialer.go
-index 05adc77..3eaa77b 100644
---- a/transport/internet/system_dialer.go
-+++ b/transport/internet/system_dialer.go
-@@ -76,6 +76,7 @@ func (d *DefaultSystemDialer) Dial(ctx context.Context, src net.Address, dest ne
- 				}
- 			})
- 		}
-+		lc.Control = net.NetworkControl(destAddr.String(), lc.Control)
- 		packetConn, err := lc.ListenPacket(ctx, srcAddr.Network(), srcAddr.String())
- 		if err != nil {
- 			return nil, err
-@@ -135,6 +136,7 @@ func (d *DefaultSystemDialer) Dial(ctx context.Context, src net.Address, dest ne
- 		}
- 	}
- 
-+	dialer.Control = net.NetworkControl("", dialer.Control)
- 	return dialer.DialContext(ctx, dest.Network.SystemString(), dest.NetAddr())
- }
- 
-diff --git a/transport/internet/system_listener.go b/transport/internet/system_listener.go
-index 1999953..1f958f9 100644
---- a/transport/internet/system_listener.go
-+++ b/transport/internet/system_listener.go
-@@ -86,7 +86,7 @@ func (dl *DefaultListener) Listen(ctx context.Context, addr net.Addr, sockopt *S
- 	case *net.TCPAddr:
- 		network = addr.Network()
- 		address = addr.String()
--		lc.Control = getControlFunc(ctx, sockopt, dl.controllers)
-+		lc.Control = net.InboundNetworkControl(getControlFunc(ctx, sockopt, dl.controllers))
- 		// default disable keepalive
- 		lc.KeepAlive = -1
- 		if sockopt != nil {
-@@ -176,7 +176,7 @@ func (dl *DefaultListener) Listen(ctx context.Context, addr net.Addr, sockopt *S
- func (dl *DefaultListener) ListenPacket(ctx context.Context, addr net.Addr, sockopt *SocketConfig) (net.PacketConn, error) {
- 	var lc net.ListenConfig
- 
--	lc.Control = getControlFunc(ctx, sockopt, dl.controllers)
-+	lc.Control = net.InboundNetworkControl(getControlFunc(ctx, sockopt, dl.controllers))
- 
- 	return lc.ListenPacket(ctx, addr.Network(), addr.String())
- }
 diff --git a/common/net/android_network.go b/common/net/android_network.go
 new file mode 100644
 index 0000000..5e51d3d
@@ -343,3 +217,122 @@ index 0000000..4023efa
 +		}
 +	}
 +}
+diff --git a/features/dns/localdns/client.go b/features/dns/localdns/client.go
+index 4472e65..f92e876 100644
+--- a/features/dns/localdns/client.go
++++ b/features/dns/localdns/client.go
+@@ -33,7 +33,7 @@ func (*Client) Close() error { return nil }
+ func (c *Client) LookupIP(host string, option dns.IPOption) ([]net.IP, uint32, error) {
+ 	var ips []net.IP
+ 	var err error
+-	if len(internet.Controllers) > 0 {
++	if len(internet.Controllers) > 0 && !net.AndroidNetworkSelected() {
+ 		ips, err = c.r.LookupIP(context.Background(), "ip", host)
+ 	} else {
+ 		ips, err = net.LookupIP(host)
+diff --git a/proxy/trojan/server.go b/proxy/trojan/server.go
+index 8fd19be..7e5cb1e 100644
+--- a/proxy/trojan/server.go
++++ b/proxy/trojan/server.go
+@@ -453,7 +453,7 @@ func (s *Server) fallback(ctx context.Context, err error, sessionPolicy policy.S
+ 
+ 	var conn net.Conn
+ 	if err := retry.ExponentialBackoff(5, 100).On(func() error {
+-		var dialer net.Dialer
++		dialer := net.Dialer{Control: net.NetworkControl("", nil)}
+ 		conn, err = dialer.DialContext(ctx, fb.Type, fb.Dest)
+ 		if err != nil {
+ 			return err
+diff --git a/proxy/vless/inbound/inbound.go b/proxy/vless/inbound/inbound.go
+index 5692874..4077e86 100644
+--- a/proxy/vless/inbound/inbound.go
++++ b/proxy/vless/inbound/inbound.go
+@@ -416,7 +416,7 @@ func (h *Handler) Process(ctx context.Context, network net.Network, connection s
+ 
+ 			var conn net.Conn
+ 			if err := retry.ExponentialBackoff(5, 100).On(func() error {
+-				var dialer net.Dialer
++				dialer := net.Dialer{Control: net.NetworkControl("", nil)}
+ 				conn, err = dialer.DialContext(ctx, fb.Type, fb.Dest)
+ 				if err != nil {
+ 					return err
+diff --git a/transport/internet/finalmask/xicmp/client.go b/transport/internet/finalmask/xicmp/client.go
+index 702eefb..f4b44a3 100644
+--- a/transport/internet/finalmask/xicmp/client.go
++++ b/transport/internet/finalmask/xicmp/client.go
+@@ -51,6 +51,9 @@ type xicmpConnClient struct {
+ }
+ 
+ func NewConnClient(c *Config, dest *net.Destination) (net.PacketConn, error) {
++	if net.AndroidNetworkSelected() {
++		return nil, errors.New("xicmp is unsupported with a selected Android network")
++	}
+ 	var icmp4, icmp6 *icmp.PacketConn
+ 	var err4, err6 error
+ 	if c.DGRAM {
+diff --git a/transport/internet/reality/config.go b/transport/internet/reality/config.go
+index 4e1b625..4f33821 100644
+--- a/transport/internet/reality/config.go
++++ b/transport/internet/reality/config.go
+@@ -5,17 +5,17 @@ import (
+ 	"crypto/ecdh"
+ 	"crypto/mldsa"
+ 	"io"
+-	"net"
+ 	"os"
+ 	"time"
+ 
+ 	"github.com/xtls/reality"
+ 	"github.com/xtls/xray-core/common/errors"
++	"github.com/xtls/xray-core/common/net"
+ 	"github.com/xtls/xray-core/transport/internet"
+ )
+ 
+ func (c *Config) GetREALITYConfig() *reality.Config {
+-	var dialer net.Dialer
++	dialer := net.Dialer{Control: net.NetworkControl("", nil)}
+ 	config := &reality.Config{
+ 		DialContext: dialer.DialContext,
+ 
+diff --git a/transport/internet/system_dialer.go b/transport/internet/system_dialer.go
+index f881a20..a072e09 100644
+--- a/transport/internet/system_dialer.go
++++ b/transport/internet/system_dialer.go
+@@ -93,6 +93,7 @@ func (d *DefaultSystemDialer) Dial(ctx context.Context, src net.Address, dest ne
+ 				return nil
+ 			}
+ 		}
++		lc.Control = net.NetworkControl(destAddr.String(), lc.Control)
+ 		packetConn, err := lc.ListenPacket(ctx, srcAddr.Network(), srcAddr.String())
+ 		var bindErr *BindError
+ 		if err != nil && runtime.GOOS == "windows" && go_errors.As(err, &bindErr) {
+@@ -168,6 +169,7 @@ func (d *DefaultSystemDialer) Dial(ctx context.Context, src net.Address, dest ne
+ 		}
+ 	}
+ 
++	dialer.Control = net.NetworkControl("", dialer.Control)
+ 	return dialer.DialContext(ctx, dest.Network.SystemString(), dest.NetAddr())
+ }
+ 
+diff --git a/transport/internet/system_listener.go b/transport/internet/system_listener.go
+index b651796..fbd3db3 100644
+--- a/transport/internet/system_listener.go
++++ b/transport/internet/system_listener.go
+@@ -86,7 +86,7 @@ func (dl *DefaultListener) Listen(ctx context.Context, addr net.Addr, sockopt *S
+ 	case *net.TCPAddr:
+ 		network = addr.Network()
+ 		address = addr.String()
+-		lc.Control = getControlFunc(ctx, sockopt, dl.controllers)
++		lc.Control = net.InboundNetworkControl(getControlFunc(ctx, sockopt, dl.controllers))
+ 		// default disable keepalive
+ 		lc.KeepAlive = -1
+ 		// MPTCP is enabled by default golang listener
+@@ -177,7 +177,7 @@ func (dl *DefaultListener) Listen(ctx context.Context, addr net.Addr, sockopt *S
+ func (dl *DefaultListener) ListenPacket(ctx context.Context, addr net.Addr, sockopt *SocketConfig) (net.PacketConn, error) {
+ 	var lc net.ListenConfig
+ 
+-	lc.Control = getControlFunc(ctx, sockopt, dl.controllers)
++	lc.Control = net.InboundNetworkControl(getControlFunc(ctx, sockopt, dl.controllers))
+ 
+ 	return lc.ListenPacket(ctx, addr.Network(), addr.String())
+ }

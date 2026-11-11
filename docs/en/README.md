@@ -12,9 +12,17 @@
 - MTProto / TUIC sidecars and panel / Xray self-updates are not supported yet.
 - System statistics Android cannot read fall back to warnings or zero values; Linux systemd, Fail2ban, syslog, and installers are outside the app's scope, and some upstream menus may still appear.
 
+## Core baseline
+
+The `preview` branch pins 3x-ui v3.11.0, Xray-core v26.11.9, and frpc v0.72.0. Sources are stored in versioned directories under `upstream/`, preserving existing checkouts. Xray downloads are cached by version and verified against pinned SHA256 hashes.
+
+Android retains `admin` / `admin` for the first login on a fresh database; existing accounts are left intact. Upstream random first-login credentials are not written to Android logs.
+
+Protocol validation targets Shadowsocks AEAD / SS2022 TCP and UDP, VLESS + RAW + REALITY + Vision, and Hysteria 2 TCP and UDP. This does not certify every cipher, client implementation, or network environment. See the [validation record](../PROGRESS.md).
+
 ## Build
 
-Install JDK 17, Android SDK 36, Build Tools 36.0.0, NDK r30, Go 1.27.1, Node.js 24+, npm, Python 3.11+, Git, and curl.
+Install JDK 17, Android SDK 36, Build Tools 36.0.0, NDK r30, Go 1.27.3, Node.js 26+, npm, Python 3.11+, Git, and curl.
 
 ```bash
 export JAVA_HOME="$(/usr/libexec/java_home -v 17)"
@@ -107,6 +115,14 @@ frpc device tests cover real TCP/UDP round trips, reconnects, independent start 
 Use the isolated package and a development device for device tests; stop the service of the regular package first to release the fixed panel port, and the tests do not remove the regular package's data. Executed items and limitations are in the [progress record](../PROGRESS.md).
 
 For multi-instance validation, run `scripts/frp-validation-server.py --multi-instance` and reverse ports with `adb reverse tcp:17000 tcp:17000` and `adb reverse tcp:17001 tcp:17001`. Limit device tests with `-Pandroid.testInstrumentationRunnerArguments.class=io.github.xraydroid.runtime.FrpMultiInstanceTest`. Stop the fixture and remove both forwards afterward. This case verifies simultaneous login to two servers and independent restart, network waiting, stop, and rapid start/stop.
+
+Bidirectional interoperability with official Hysteria 2 can be checked separately using host executables; these tools are validation-only and are not packaged in the APK. The script uses temporary local certificates and configurations, checks TCP/UDP, and cleans up child processes:
+
+```bash
+python3 scripts/verify-hysteria-interop.py \
+  --xray /path/to/host/xray \
+  --hysteria /path/to/official/hysteria
+```
 
 ## License and sources
 

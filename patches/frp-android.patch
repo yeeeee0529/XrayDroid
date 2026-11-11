@@ -1,620 +1,3 @@
-diff --git a/client/api_router.go b/client/api_router.go
-index 82b7304..67c8345 100644
---- a/client/api_router.go
-+++ b/client/api_router.go
-@@ -33,6 +33,7 @@ func (svr *Service) registerRouteHandlers(helper *httppkg.RouterRegisterHelper)
- 	subRouter := helper.Router.NewRoute().Subrouter()
- 	subRouter.Use(helper.AuthMiddleware)
- 	subRouter.Use(httppkg.NewRequestLogger)
-+	subRouter.HandleFunc("/api/xraydroid/status", httppkg.MakeHTTPHandlerFunc(svr.appStatus)).Methods(http.MethodGet)
- 	subRouter.HandleFunc("/api/reload", httppkg.MakeHTTPHandlerFunc(apiController.Reload)).Methods(http.MethodGet)
- 	subRouter.HandleFunc("/api/stop", httppkg.MakeHTTPHandlerFunc(apiController.Stop)).Methods(http.MethodPost)
- 	subRouter.HandleFunc("/api/status", httppkg.MakeHTTPHandlerFunc(apiController.Status)).Methods(http.MethodGet)
-diff --git a/client/connector.go b/client/connector.go
-index 34b24f0..17200bf 100644
---- a/client/connector.go
-+++ b/client/connector.go
-@@ -32,6 +32,7 @@ import (
- 	"github.com/fatedier/frp/pkg/msg"
- 	"github.com/fatedier/frp/pkg/proto/wire"
- 	"github.com/fatedier/frp/pkg/transport"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	netpkg "github.com/fatedier/frp/pkg/util/net"
- 	"github.com/fatedier/frp/pkg/util/xlog"
- )
-@@ -81,9 +82,10 @@ type defaultConnectorImpl struct {
- 	ctx context.Context
- 	cfg *v1.ClientCommonConfig
- 
--	muxSession *fmux.Session
--	quicConn   *quic.Conn
--	closeOnce  sync.Once
-+	muxSession    *fmux.Session
-+	quicConn      *quic.Conn
-+	quicTransport *quic.Transport
-+	closeOnce     sync.Once
- }
- 
- func NewConnector(ctx context.Context, cfg *v1.ClientCommonConfig) Connector {
-@@ -123,7 +125,27 @@ func (c *defaultConnectorImpl) Open() error {
- 		}
- 		tlsConfig.NextProtos = []string{"frp"}
- 
--		conn, err := quic.DialAddr(
-+		dial := quic.DialAddr
-+		if androidnet.Selected() {
-+			remote, err := net.ResolveUDPAddr("udp", net.JoinHostPort(c.cfg.ServerAddr, strconv.Itoa(c.cfg.ServerPort)))
-+			if err != nil {
-+				return err
-+			}
-+			packet, err := androidnet.ListenUDPForRemote("udp", remote)
-+			if err != nil {
-+				return err
-+			}
-+			c.quicTransport = &quic.Transport{Conn: packet}
-+			dial = func(ctx context.Context, _ string, tlsConfig *tls.Config, config *quic.Config) (*quic.Conn, error) {
-+				conn, err := c.quicTransport.Dial(ctx, remote, tlsConfig, config)
-+				if err != nil {
-+					c.quicTransport.Close()
-+					packet.Close()
-+				}
-+				return conn, err
-+			}
-+		}
-+		conn, err := dial(
- 			c.ctx,
- 			net.JoinHostPort(c.cfg.ServerAddr, strconv.Itoa(c.cfg.ServerPort)),
- 			tlsConfig, &quic.Config{
-@@ -205,6 +227,10 @@ func (c *defaultConnectorImpl) realConnect() (net.Conn, error) {
- 		}
- 	}
- 
-+	if androidnet.Selected() {
-+		return c.androidConnect(tlsConfig)
-+	}
-+
- 	proxyType, addr, auth, err := libnet.ParseProxyURL(c.cfg.Transport.ProxyURL)
- 	if err != nil {
- 		xl.Errorf("fail to parse proxy url")
-@@ -255,6 +281,10 @@ func (c *defaultConnectorImpl) Close() error {
- 		if c.quicConn != nil {
- 			_ = c.quicConn.CloseWithError(0, "")
- 		}
-+		if c.quicTransport != nil {
-+			_ = c.quicTransport.Close()
-+			_ = c.quicTransport.Conn.Close()
-+		}
- 		if c.muxSession != nil {
- 			_ = c.muxSession.Close()
- 		}
-diff --git a/client/control_session.go b/client/control_session.go
-index e3ed27f..f395a7b 100644
---- a/client/control_session.go
-+++ b/client/control_session.go
-@@ -71,7 +71,7 @@ func (d *controlSessionDialer) Dial(previousRunID string) (*SessionContext, erro
- 
- 	loginMsg, err := d.buildLoginMsg(previousRunID)
- 	if err != nil {
--		return nil, err
-+		return nil, appLoginError{code: "authentication", err: err}
- 	}
- 
- 	loginResult, err := d.exchangeLogin(conn, loginMsg)
-@@ -80,7 +80,7 @@ func (d *controlSessionDialer) Dial(previousRunID string) (*SessionContext, erro
- 	}
- 	loginRespMsg := loginResult.resp
- 	if loginRespMsg.Error != "" {
--		return nil, errors.New(loginRespMsg.Error)
-+		return nil, appLoginError{code: "login_rejected", err: errors.New(loginRespMsg.Error)}
- 	}
- 
- 	var controlRW io.ReadWriter = conn
-diff --git a/client/health/health.go b/client/health/health.go
-index d298e61..596893b 100644
---- a/client/health/health.go
-+++ b/client/health/health.go
-@@ -25,6 +25,7 @@ import (
- 	"time"
- 
- 	v1 "github.com/fatedier/frp/pkg/config/v1"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	"github.com/fatedier/frp/pkg/util/xlog"
- )
- 
-@@ -155,7 +156,7 @@ func (monitor *Monitor) doTCPCheck(ctx context.Context) error {
- 		return nil
- 	}
- 
--	var d net.Dialer
-+	d := net.Dialer{Control: androidnet.Control(nil)}
- 	conn, err := d.DialContext(ctx, "tcp", monitor.addr)
- 	if err != nil {
- 		return err
-diff --git a/client/proxy/proxy.go b/client/proxy/proxy.go
-index e982c03..70e9159 100644
---- a/client/proxy/proxy.go
-+++ b/client/proxy/proxy.go
-@@ -25,7 +25,6 @@ import (
- 	"time"
- 
- 	libio "github.com/fatedier/golib/io"
--	libnet "github.com/fatedier/golib/net"
- 	"golang.org/x/time/rate"
- 
- 	"github.com/fatedier/frp/pkg/config/types"
-@@ -33,6 +32,7 @@ import (
- 	"github.com/fatedier/frp/pkg/msg"
- 	plugin "github.com/fatedier/frp/pkg/plugin/client"
- 	"github.com/fatedier/frp/pkg/transport"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	"github.com/fatedier/frp/pkg/util/limit"
- 	netpkg "github.com/fatedier/frp/pkg/util/net"
- 	"github.com/fatedier/frp/pkg/util/xlog"
-@@ -228,10 +228,8 @@ func (pxy *BaseProxy) HandleTCPWorkConnection(workConn net.Conn, m *msg.StartWor
- 		defer recycleFn()
- 	}
- 
--	localConn, err := libnet.Dial(
--		net.JoinHostPort(baseCfg.LocalIP, strconv.Itoa(baseCfg.LocalPort)),
--		libnet.WithTimeout(10*time.Second),
--	)
-+	dialer := net.Dialer{Timeout: 10 * time.Second, Control: androidnet.Control(nil)}
-+	localConn, err := dialer.DialContext(pxy.ctx, "tcp", net.JoinHostPort(baseCfg.LocalIP, strconv.Itoa(baseCfg.LocalPort)))
- 	if err != nil {
- 		workConn.Close()
- 		xl.Errorf("connect to local service [%s:%d] error: %v", baseCfg.LocalIP, baseCfg.LocalPort, err)
-diff --git a/client/proxy/xtcp.go b/client/proxy/xtcp.go
-index aef6678..f1aec23 100644
---- a/client/proxy/xtcp.go
-+++ b/client/proxy/xtcp.go
-@@ -30,6 +30,7 @@ import (
- 	"github.com/fatedier/frp/pkg/naming"
- 	"github.com/fatedier/frp/pkg/nathole"
- 	"github.com/fatedier/frp/pkg/transport"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	netpkg "github.com/fatedier/frp/pkg/util/net"
- )
- 
-@@ -143,7 +144,7 @@ func (pxy *XTCPProxy) listenByKCP(listenConn *net.UDPConn, raddr *net.UDPAddr, s
- 	xl := pxy.xl
- 	listenConn.Close()
- 	laddr, _ := net.ResolveUDPAddr("udp", listenConn.LocalAddr().String())
--	lConn, err := net.DialUDP("udp", laddr, raddr)
-+	lConn, err := androidnet.DialUDP("udp", laddr, raddr)
- 	if err != nil {
- 		xl.Warnf("dial udp error: %v", err)
- 		return
-diff --git a/client/service.go b/client/service.go
-index 7964050..7f11f3f 100644
---- a/client/service.go
-+++ b/client/service.go
-@@ -110,7 +110,8 @@ func setServiceOptionsDefault(options *ServiceOptions) error {
- 
- // Service is the client service that connects to frps and provides proxy services.
- type Service struct {
--	ctlMu sync.RWMutex
-+	connectionStatus atomic.Pointer[appConnectionStatus]
-+	ctlMu            sync.RWMutex
- 	// Stores gracefulShutdownDuration independently from ctlMu, because the
- 	// graceful shutdown wait may hold ctlMu for an arbitrary duration.
- 	gracefulShutdownDuration atomic.Int64
-@@ -309,6 +310,7 @@ func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginE
- 	xl := xlog.FromContextSafe(svr.ctx)
- 
- 	loginFunc := func() (bool, error) {
-+		svr.beginConnectionAttempt()
- 		xl.Infof("try to connect to server...")
- 		dialer := &controlSessionDialer{
- 			ctx:              svr.ctx,
-@@ -320,6 +322,7 @@ func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginE
- 		}
- 		sessionCtx, err := dialer.Dial(svr.runID)
- 		if err != nil {
-+			svr.failConnectionAttempt(err)
- 			xl.Warnf("connect to server error: %v", err)
- 			if firstLoginExit {
- 				svr.cancel(cancelErr{Err: err})
-@@ -340,6 +343,7 @@ func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginE
- 		if err != nil {
- 			sessionCtx.Conn.Close()
- 			sessionCtx.Connector.Close()
-+			svr.failConnectionAttempt(err)
- 			xl.Errorf("new control error: %v", err)
- 			return false, err
- 		}
-@@ -352,6 +356,7 @@ func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginE
- 			svr.ctl.Close()
- 		}
- 		svr.ctl = ctl
-+		svr.completeConnectionAttempt()
- 		svr.ctlMu.Unlock()
- 		return true, nil
- 	}
-diff --git a/client/visitor/stcp.go b/client/visitor/stcp.go
-index 03ec51f..7c33460 100644
---- a/client/visitor/stcp.go
-+++ b/client/visitor/stcp.go
-@@ -21,6 +21,7 @@ import (
- 	libio "github.com/fatedier/golib/io"
- 
- 	v1 "github.com/fatedier/frp/pkg/config/v1"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	"github.com/fatedier/frp/pkg/util/xlog"
- )
- 
-@@ -32,7 +33,7 @@ type STCPVisitor struct {
- 
- func (sv *STCPVisitor) Run() (err error) {
- 	if sv.cfg.BindPort > 0 {
--		sv.l, err = net.Listen("tcp", net.JoinHostPort(sv.cfg.BindAddr, strconv.Itoa(sv.cfg.BindPort)))
-+		sv.l, err = androidnet.Listen("tcp", net.JoinHostPort(sv.cfg.BindAddr, strconv.Itoa(sv.cfg.BindPort)))
- 		if err != nil {
- 			return
- 		}
-diff --git a/client/visitor/sudp.go b/client/visitor/sudp.go
-index f1939bd..a20682d 100644
---- a/client/visitor/sudp.go
-+++ b/client/visitor/sudp.go
-@@ -26,6 +26,7 @@ import (
- 	v1 "github.com/fatedier/frp/pkg/config/v1"
- 	"github.com/fatedier/frp/pkg/msg"
- 	"github.com/fatedier/frp/pkg/proto/udp"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	netpkg "github.com/fatedier/frp/pkg/util/net"
- 	"github.com/fatedier/frp/pkg/util/xlog"
- )
-@@ -51,7 +52,7 @@ func (sv *SUDPVisitor) Run() (err error) {
- 		return fmt.Errorf("sudp ResolveUDPAddr error: %v", err)
- 	}
- 
--	sv.udpConn, err = net.ListenUDP("udp", addr)
-+	sv.udpConn, err = androidnet.ListenUDP("udp", addr, true)
- 	if err != nil {
- 		return fmt.Errorf("listen udp port %s error: %v", addr.String(), err)
- 	}
-diff --git a/client/visitor/xtcp.go b/client/visitor/xtcp.go
-index e7a6089..d945269 100644
---- a/client/visitor/xtcp.go
-+++ b/client/visitor/xtcp.go
-@@ -34,6 +34,7 @@ import (
- 	"github.com/fatedier/frp/pkg/naming"
- 	"github.com/fatedier/frp/pkg/nathole"
- 	"github.com/fatedier/frp/pkg/transport"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	netpkg "github.com/fatedier/frp/pkg/util/net"
- 	"github.com/fatedier/frp/pkg/util/util"
- 	"github.com/fatedier/frp/pkg/util/xlog"
-@@ -61,7 +62,7 @@ func (sv *XTCPVisitor) Run() (err error) {
- 	}
- 
- 	if sv.cfg.BindPort > 0 {
--		sv.l, err = net.Listen("tcp", net.JoinHostPort(sv.cfg.BindAddr, strconv.Itoa(sv.cfg.BindPort)))
-+		sv.l, err = androidnet.Listen("tcp", net.JoinHostPort(sv.cfg.BindAddr, strconv.Itoa(sv.cfg.BindPort)))
- 		if err != nil {
- 			return
- 		}
-@@ -337,7 +338,7 @@ func NewKCPTunnelSession() TunnelSession {
- func (ks *KCPTunnelSession) Init(listenConn *net.UDPConn, raddr *net.UDPAddr) error {
- 	listenConn.Close()
- 	laddr, _ := net.ResolveUDPAddr("udp", listenConn.LocalAddr().String())
--	lConn, err := net.DialUDP("udp", laddr, raddr)
-+	lConn, err := androidnet.DialUDP("udp", laddr, raddr)
- 	if err != nil {
- 		return fmt.Errorf("dial udp error: %v", err)
- 	}
-diff --git a/cmd/frpc/sub/root.go b/cmd/frpc/sub/root.go
-index 8a0f184..082fbb5 100644
---- a/cmd/frpc/sub/root.go
-+++ b/cmd/frpc/sub/root.go
-@@ -135,6 +135,9 @@ func runClient(cfgFilePath string, unsafeFeatures *security.UnsafeFeatures) erro
- 
- // runClientWithAggregator runs the client using the internal source aggregator.
- func runClientWithAggregator(result *config.ClientConfigLoadResult, unsafeFeatures *security.UnsafeFeatures, cfgFilePath string) error {
-+	if err := applyAndroidRuntimeConfig(result.Common); err != nil {
-+		return err
-+	}
- 	configSource := source.NewConfigSource()
- 	if err := configSource.ReplaceAll(result.Proxies, result.Visitors); err != nil {
- 		return fmt.Errorf("failed to set config source: %w", err)
-diff --git a/pkg/nathole/discovery.go b/pkg/nathole/discovery.go
-index 241b0f6..be31fc2 100644
---- a/pkg/nathole/discovery.go
-+++ b/pkg/nathole/discovery.go
-@@ -21,6 +21,8 @@ import (
- 	"time"
- 
- 	"github.com/fatedier/golib/net/stun"
-+
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- )
- 
- var responseTimeout = 3 * time.Second
-@@ -65,7 +67,7 @@ func listen(localAddr string) (*discoverConn, error) {
- 		}
- 		local = addr
- 	}
--	conn, err := net.ListenUDP("udp4", local)
-+	conn, err := androidnet.ListenUDP("udp4", local, false)
- 	if err != nil {
- 		return nil, err
- 	}
-diff --git a/pkg/nathole/nathole.go b/pkg/nathole/nathole.go
-index bea3d37..0bea285 100644
---- a/pkg/nathole/nathole.go
-+++ b/pkg/nathole/nathole.go
-@@ -30,6 +30,7 @@ import (
- 
- 	"github.com/fatedier/frp/pkg/msg"
- 	"github.com/fatedier/frp/pkg/transport"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	"github.com/fatedier/frp/pkg/util/xlog"
- )
- 
-@@ -135,7 +136,7 @@ func Prepare(stunServers []string, opts PrepareOptions) (*PrepareResult, error)
- 	if err != nil {
- 		return nil, fmt.Errorf("resolve local udp addr error: %v", err)
- 	}
--	listenConn, err := net.ListenUDP("udp4", laddr)
-+	listenConn, err := androidnet.ListenUDP("udp4", laddr, false)
- 	if err != nil {
- 		return nil, fmt.Errorf("listen local udp addr error: %v", err)
- 	}
-@@ -213,7 +214,7 @@ func MakeHole(ctx context.Context, listenConn *net.UDPConn, m *msg.NatHoleResp,
- 
- 		if m.DetectBehavior.ListenRandomPorts > 0 {
- 			for i := 0; i < m.DetectBehavior.ListenRandomPorts; i++ {
--				tmpConn, err := net.ListenUDP("udp4", nil)
-+				tmpConn, err := androidnet.ListenUDP("udp4", nil, false)
- 				if err != nil {
- 					xl.Warnf("listen random udp addr error: %v", err)
- 					continue
-diff --git a/pkg/plugin/client/http2https.go b/pkg/plugin/client/http2https.go
-index f5a6160..995d635 100644
---- a/pkg/plugin/client/http2https.go
-+++ b/pkg/plugin/client/http2https.go
-@@ -22,6 +22,7 @@ import (
- 	"net/http/httputil"
- 
- 	v1 "github.com/fatedier/frp/pkg/config/v1"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- )
- 
- func init() {
-@@ -42,6 +43,7 @@ func NewHTTP2HTTPSPlugin(_ PluginContext, options v1.ClientPluginOptions) (Plugi
- 	}
- 
- 	tr := &http.Transport{
-+		DialContext:     androidnet.DialContext,
- 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
- 	}
- 
-diff --git a/pkg/plugin/client/http_proxy.go b/pkg/plugin/client/http_proxy.go
-index 0145f44..94c121f 100644
---- a/pkg/plugin/client/http_proxy.go
-+++ b/pkg/plugin/client/http_proxy.go
-@@ -21,7 +21,6 @@ import (
- 	"context"
- 	"encoding/base64"
- 	"io"
--	"net"
- 	"net/http"
- 	"strings"
- 	"time"
-@@ -30,6 +29,7 @@ import (
- 	libnet "github.com/fatedier/golib/net"
- 
- 	v1 "github.com/fatedier/frp/pkg/config/v1"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	netpkg "github.com/fatedier/frp/pkg/util/net"
- 	"github.com/fatedier/frp/pkg/util/util"
- )
-@@ -174,7 +174,7 @@ func (hp *HTTPProxy) handleConnectReq(req *http.Request, rwc io.ReadWriteCloser)
- 		return
- 	}
- 
--	remote, err := net.Dial("tcp", req.URL.Host)
-+	remote, err := androidnet.DialContext(req.Context(), "tcp", req.URL.Host)
- 	if err != nil {
- 		res := &http.Response{
- 			StatusCode: 400,
-diff --git a/pkg/plugin/client/https2https.go b/pkg/plugin/client/https2https.go
-index 7b9e455..476e665 100644
---- a/pkg/plugin/client/https2https.go
-+++ b/pkg/plugin/client/https2https.go
-@@ -22,6 +22,7 @@ import (
- 	"net/http/httputil"
- 
- 	v1 "github.com/fatedier/frp/pkg/config/v1"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- )
- 
- func init() {
-@@ -42,6 +43,7 @@ func NewHTTPS2HTTPSPlugin(_ PluginContext, options v1.ClientPluginOptions) (Plug
- 	}
- 
- 	tr := &http.Transport{
-+		DialContext:     androidnet.DialContext,
- 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
- 	}
- 
-diff --git a/pkg/plugin/client/socks5.go b/pkg/plugin/client/socks5.go
-index 752dd1e..18b3fc4 100644
---- a/pkg/plugin/client/socks5.go
-+++ b/pkg/plugin/client/socks5.go
-@@ -24,6 +24,7 @@ import (
- 	gosocks5 "github.com/armon/go-socks5"
- 
- 	v1 "github.com/fatedier/frp/pkg/config/v1"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	netpkg "github.com/fatedier/frp/pkg/util/net"
- )
- 
-@@ -39,6 +40,7 @@ func NewSocks5Plugin(_ PluginContext, options v1.ClientPluginOptions) (p Plugin,
- 	opts := options.(*v1.Socks5PluginOptions)
- 
- 	cfg := &gosocks5.Config{
-+		Dial:   androidnet.DialContext,
- 		Logger: log.New(io.Discard, "", log.LstdFlags),
- 	}
- 	if opts.Username != "" || opts.Password != "" {
-diff --git a/pkg/plugin/client/tls2raw.go b/pkg/plugin/client/tls2raw.go
-index 6ce0542..93fd798 100644
---- a/pkg/plugin/client/tls2raw.go
-+++ b/pkg/plugin/client/tls2raw.go
-@@ -19,12 +19,12 @@ package client
- import (
- 	"context"
- 	"crypto/tls"
--	"net"
- 
- 	libio "github.com/fatedier/golib/io"
- 
- 	v1 "github.com/fatedier/frp/pkg/config/v1"
- 	"github.com/fatedier/frp/pkg/transport"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	netpkg "github.com/fatedier/frp/pkg/util/net"
- 	"github.com/fatedier/frp/pkg/util/xlog"
- )
-@@ -65,7 +65,7 @@ func (p *TLS2RawPlugin) Handle(ctx context.Context, connInfo *ConnectionInfo) {
- 		tlsConn.Close()
- 		return
- 	}
--	rawConn, err := net.Dial("tcp", p.opts.LocalAddr)
-+	rawConn, err := androidnet.DialContext(ctx, "tcp", p.opts.LocalAddr)
- 	if err != nil {
- 		xl.Warnf("dial to local addr error: %v", err)
- 		tlsConn.Close()
-diff --git a/pkg/proto/udp/udp.go b/pkg/proto/udp/udp.go
-index ec3bd94..d9fceec 100644
---- a/pkg/proto/udp/udp.go
-+++ b/pkg/proto/udp/udp.go
-@@ -23,6 +23,7 @@ import (
- 	"github.com/fatedier/golib/pool"
- 
- 	"github.com/fatedier/frp/pkg/msg"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	netpkg "github.com/fatedier/frp/pkg/util/net"
- )
- 
-@@ -120,7 +121,7 @@ func Forwarder(dstAddr *net.UDPAddr, readCh <-chan *msg.UDPPacket, sendCh chan<-
- 			mu.Lock()
- 			udpConn, ok := udpConnMap[udpMsg.RemoteAddr.String()]
- 			if !ok {
--				udpConn, err = net.DialUDP("udp", nil, dstAddr)
-+				udpConn, err = androidnet.DialUDP("udp", nil, dstAddr)
- 				if err != nil {
- 					mu.Unlock()
- 					continue
-diff --git a/pkg/ssh/gateway.go b/pkg/ssh/gateway.go
-index 4d90f33..c7a4d43 100644
---- a/pkg/ssh/gateway.go
-+++ b/pkg/ssh/gateway.go
-@@ -25,6 +25,7 @@ import (
- 
- 	v1 "github.com/fatedier/frp/pkg/config/v1"
- 	"github.com/fatedier/frp/pkg/transport"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	"github.com/fatedier/frp/pkg/util/log"
- 	netpkg "github.com/fatedier/frp/pkg/util/net"
- )
-@@ -90,7 +91,7 @@ func NewGateway(
- 		}, nil
- 	}
- 
--	ln, err := net.Listen("tcp", net.JoinHostPort(bindAddr, strconv.Itoa(cfg.BindPort)))
-+	ln, err := androidnet.Listen("tcp", net.JoinHostPort(bindAddr, strconv.Itoa(cfg.BindPort)))
- 	if err != nil {
- 		return nil, err
- 	}
-diff --git a/pkg/util/http/server.go b/pkg/util/http/server.go
-index 0bca899..588e9bc 100644
---- a/pkg/util/http/server.go
-+++ b/pkg/util/http/server.go
-@@ -26,6 +26,7 @@ import (
- 
- 	"github.com/fatedier/frp/assets"
- 	v1 "github.com/fatedier/frp/pkg/config/v1"
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- 	netpkg "github.com/fatedier/frp/pkg/util/net"
- )
- 
-@@ -53,7 +54,7 @@ func NewServer(cfg v1.WebServerConfig) (*Server, error) {
- 		addr = ":http"
- 	}
- 
--	ln, err := net.Listen("tcp", addr)
-+	ln, err := androidnet.Listen("tcp", addr)
- 	if err != nil {
- 		return nil, err
- 	}
-diff --git a/pkg/util/net/dns.go b/pkg/util/net/dns.go
-index 441b1e6..ca01753 100644
---- a/pkg/util/net/dns.go
-+++ b/pkg/util/net/dns.go
-@@ -17,6 +17,8 @@ package net
- import (
- 	"context"
- 	"net"
-+
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- )
- 
- func SetDefaultDNSAddress(dnsAddress string) {
-@@ -27,7 +29,7 @@ func SetDefaultDNSAddress(dnsAddress string) {
- 	net.DefaultResolver = &net.Resolver{
- 		PreferGo: true,
- 		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
--			return net.Dial(network, dnsAddress)
-+			return androidnet.DialContext(ctx, network, dnsAddress)
- 		},
- 	}
- }
-diff --git a/pkg/util/net/udp.go b/pkg/util/net/udp.go
-index aa4d983..fc254de 100644
---- a/pkg/util/net/udp.go
-+++ b/pkg/util/net/udp.go
-@@ -23,6 +23,8 @@ import (
- 	"time"
- 
- 	"github.com/fatedier/golib/pool"
-+
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- )
- 
- type UDPPacket struct {
-@@ -163,7 +165,7 @@ func ListenUDP(bindAddr string, bindPort int) (l *UDPListener, err error) {
- 	if err != nil {
- 		return l, err
- 	}
--	readConn, err := net.ListenUDP("udp", udpAddr)
-+	readConn, err := androidnet.ListenUDP("udp", udpAddr, true)
- 	if err != nil {
- 		return l, err
- 	}
-diff --git a/pkg/util/system/system_android.go b/pkg/util/system/system_android.go
-index 6fcfdbc..c528fca 100644
---- a/pkg/util/system/system_android.go
-+++ b/pkg/util/system/system_android.go
-@@ -20,6 +20,8 @@ import (
- 	"os/exec"
- 	"strings"
- 	"time"
-+
-+	"github.com/fatedier/frp/pkg/util/androidnet"
- )
- 
- func EnableCompatibilityMode() {
-@@ -44,6 +46,10 @@ func fixTimezone() {
- // If it is not available, it will default to using 8.8.8.8 as the DNS server.
- // This is a workaround for the issue that golang can't get the default DNS servers on Android.
- func fixDNSResolver() {
-+	// 指定網路失效時保留失敗，不啟用公共 DNS 回退。
-+	if androidnet.Selected() {
-+		return
-+	}
- 	// First, we attempt to resolve a domain. If resolution is successful, no modifications are necessary.
- 	// In real-world scenarios, users may have already configured /etc/resolv.conf, or compiled directly
- 	// in the Android environment instead of using cross-platform compilation, so this issue does not arise.
 diff --git a/client/android_connector.go b/client/android_connector.go
 new file mode 100644
 index 0000000..7706dea
@@ -991,6 +374,18 @@ index 0000000..8ff4849
 +		})
 +	}
 +}
+diff --git a/client/api_router.go b/client/api_router.go
+index 82b7304..67c8345 100644
+--- a/client/api_router.go
++++ b/client/api_router.go
+@@ -33,6 +33,7 @@ func (svr *Service) registerRouteHandlers(helper *httppkg.RouterRegisterHelper)
+ 	subRouter := helper.Router.NewRoute().Subrouter()
+ 	subRouter.Use(helper.AuthMiddleware)
+ 	subRouter.Use(httppkg.NewRequestLogger)
++	subRouter.HandleFunc("/api/xraydroid/status", httppkg.MakeHTTPHandlerFunc(svr.appStatus)).Methods(http.MethodGet)
+ 	subRouter.HandleFunc("/api/reload", httppkg.MakeHTTPHandlerFunc(apiController.Reload)).Methods(http.MethodGet)
+ 	subRouter.HandleFunc("/api/stop", httppkg.MakeHTTPHandlerFunc(apiController.Stop)).Methods(http.MethodPost)
+ 	subRouter.HandleFunc("/api/status", httppkg.MakeHTTPHandlerFunc(apiController.Status)).Methods(http.MethodGet)
 diff --git a/client/app_status.go b/client/app_status.go
 new file mode 100644
 index 0000000..a4ea756
@@ -1292,6 +687,298 @@ index 0000000..8974afe
 +		t.Fatalf("failure survived recovery: %+v", got)
 +	}
 +}
+diff --git a/client/connector.go b/client/connector.go
+index 95138dd..b6b72e7 100644
+--- a/client/connector.go
++++ b/client/connector.go
+@@ -32,6 +32,7 @@ import (
+ 	"github.com/fatedier/frp/pkg/msg"
+ 	"github.com/fatedier/frp/pkg/proto/wire"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+ )
+@@ -81,9 +82,10 @@ type defaultConnectorImpl struct {
+ 	ctx context.Context
+ 	cfg *v1.ClientCommonConfig
+ 
+-	muxSession *fmux.Session
+-	quicConn   *quic.Conn
+-	closeOnce  sync.Once
++	muxSession    *fmux.Session
++	quicConn      *quic.Conn
++	quicTransport *quic.Transport
++	closeOnce     sync.Once
+ }
+ 
+ func NewConnector(ctx context.Context, cfg *v1.ClientCommonConfig) Connector {
+@@ -124,7 +126,27 @@ func (c *defaultConnectorImpl) Open() error {
+ 		}
+ 		tlsConfig.NextProtos = []string{"frp"}
+ 
+-		conn, err := quic.DialAddr(
++		dial := quic.DialAddr
++		if androidnet.Selected() {
++			remote, err := net.ResolveUDPAddr("udp", net.JoinHostPort(c.cfg.ServerAddr, strconv.Itoa(c.cfg.ServerPort)))
++			if err != nil {
++				return err
++			}
++			packet, err := androidnet.ListenUDPForRemote("udp", remote)
++			if err != nil {
++				return err
++			}
++			c.quicTransport = &quic.Transport{Conn: packet}
++			dial = func(ctx context.Context, _ string, tlsConfig *tls.Config, config *quic.Config) (*quic.Conn, error) {
++				conn, err := c.quicTransport.Dial(ctx, remote, tlsConfig, config)
++				if err != nil {
++					c.quicTransport.Close()
++					packet.Close()
++				}
++				return conn, err
++			}
++		}
++		conn, err := dial(
+ 			c.ctx,
+ 			net.JoinHostPort(c.cfg.ServerAddr, strconv.Itoa(c.cfg.ServerPort)),
+ 			tlsConfig, &quic.Config{
+@@ -207,6 +229,10 @@ func (c *defaultConnectorImpl) realConnect() (net.Conn, error) {
+ 		}
+ 	}
+ 
++	if androidnet.Selected() {
++		return c.androidConnect(tlsConfig)
++	}
++
+ 	proxyType, addr, auth, err := libnet.ParseProxyURL(c.cfg.Transport.ProxyURL)
+ 	if err != nil {
+ 		xl.Errorf("fail to parse proxy url")
+@@ -257,6 +283,10 @@ func (c *defaultConnectorImpl) Close() error {
+ 		if c.quicConn != nil {
+ 			_ = c.quicConn.CloseWithError(0, "")
+ 		}
++		if c.quicTransport != nil {
++			_ = c.quicTransport.Close()
++			_ = c.quicTransport.Conn.Close()
++		}
+ 		if c.muxSession != nil {
+ 			_ = c.muxSession.Close()
+ 		}
+diff --git a/client/control_session.go b/client/control_session.go
+index e3ed27f..f395a7b 100644
+--- a/client/control_session.go
++++ b/client/control_session.go
+@@ -71,7 +71,7 @@ func (d *controlSessionDialer) Dial(previousRunID string) (*SessionContext, erro
+ 
+ 	loginMsg, err := d.buildLoginMsg(previousRunID)
+ 	if err != nil {
+-		return nil, err
++		return nil, appLoginError{code: "authentication", err: err}
+ 	}
+ 
+ 	loginResult, err := d.exchangeLogin(conn, loginMsg)
+@@ -80,7 +80,7 @@ func (d *controlSessionDialer) Dial(previousRunID string) (*SessionContext, erro
+ 	}
+ 	loginRespMsg := loginResult.resp
+ 	if loginRespMsg.Error != "" {
+-		return nil, errors.New(loginRespMsg.Error)
++		return nil, appLoginError{code: "login_rejected", err: errors.New(loginRespMsg.Error)}
+ 	}
+ 
+ 	var controlRW io.ReadWriter = conn
+diff --git a/client/health/health.go b/client/health/health.go
+index cedbba3..2f022fa 100644
+--- a/client/health/health.go
++++ b/client/health/health.go
+@@ -25,6 +25,7 @@ import (
+ 	"time"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+ )
+ 
+@@ -192,7 +193,7 @@ func (monitor *Monitor) doTCPCheck(ctx context.Context) error {
+ 		return nil
+ 	}
+ 
+-	var d net.Dialer
++	d := net.Dialer{Control: androidnet.Control(nil)}
+ 	conn, err := d.DialContext(ctx, "tcp", monitor.addr)
+ 	if err != nil {
+ 		return err
+diff --git a/client/proxy/proxy.go b/client/proxy/proxy.go
+index a09967c..8d83e95 100644
+--- a/client/proxy/proxy.go
++++ b/client/proxy/proxy.go
+@@ -25,7 +25,6 @@ import (
+ 	"time"
+ 
+ 	libio "github.com/fatedier/golib/io"
+-	libnet "github.com/fatedier/golib/net"
+ 	"golang.org/x/time/rate"
+ 
+ 	"github.com/fatedier/frp/pkg/config/types"
+@@ -33,6 +32,7 @@ import (
+ 	"github.com/fatedier/frp/pkg/msg"
+ 	plugin "github.com/fatedier/frp/pkg/plugin/client"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	"github.com/fatedier/frp/pkg/util/limit"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+@@ -231,10 +231,8 @@ func (pxy *BaseProxy) HandleTCPWorkConnection(workConn net.Conn, m *msg.StartWor
+ 		defer recycleFn()
+ 	}
+ 
+-	localConn, err := libnet.Dial(
+-		net.JoinHostPort(baseCfg.LocalIP, strconv.Itoa(baseCfg.LocalPort)),
+-		libnet.WithTimeout(10*time.Second),
+-	)
++	dialer := net.Dialer{Timeout: 10 * time.Second, Control: androidnet.Control(nil)}
++	localConn, err := dialer.DialContext(pxy.ctx, "tcp", net.JoinHostPort(baseCfg.LocalIP, strconv.Itoa(baseCfg.LocalPort)))
+ 	if err != nil {
+ 		workConn.Close()
+ 		xl.Errorf("connect to local service [%s:%d] error: %v", baseCfg.LocalIP, baseCfg.LocalPort, err)
+diff --git a/client/proxy/xtcp.go b/client/proxy/xtcp.go
+index fcd1487..e094f61 100644
+--- a/client/proxy/xtcp.go
++++ b/client/proxy/xtcp.go
+@@ -30,6 +30,7 @@ import (
+ 	"github.com/fatedier/frp/pkg/naming"
+ 	"github.com/fatedier/frp/pkg/nathole"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ )
+ 
+@@ -143,7 +144,7 @@ func (pxy *XTCPProxy) listenByKCP(listenConn *net.UDPConn, raddr *net.UDPAddr, s
+ 	xl := pxy.xl
+ 	listenConn.Close()
+ 	laddr, _ := net.ResolveUDPAddr("udp", listenConn.LocalAddr().String())
+-	lConn, err := net.DialUDP("udp", laddr, raddr)
++	lConn, err := androidnet.DialUDP("udp", laddr, raddr)
+ 	if err != nil {
+ 		xl.Warnf("dial udp error: %v", err)
+ 		return
+diff --git a/client/service.go b/client/service.go
+index e7dcd8e..af47255 100644
+--- a/client/service.go
++++ b/client/service.go
+@@ -111,7 +111,8 @@ func setServiceOptionsDefault(options *ServiceOptions) error {
+ 
+ // Service is the client service that connects to frps and provides proxy services.
+ type Service struct {
+-	ctlMu sync.RWMutex
++	connectionStatus atomic.Pointer[appConnectionStatus]
++	ctlMu            sync.RWMutex
+ 	// Stores gracefulShutdownDuration independently from ctlMu, because the
+ 	// graceful shutdown wait may hold ctlMu for an arbitrary duration.
+ 	gracefulShutdownDuration atomic.Int64
+@@ -366,6 +367,7 @@ func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginE
+ 	xl := xlog.FromContextSafe(svr.ctx)
+ 
+ 	loginFunc := func() (bool, error) {
++		svr.beginConnectionAttempt()
+ 		xl.Infof("try to connect to server...")
+ 		dialer := &controlSessionDialer{
+ 			ctx:              svr.ctx,
+@@ -377,6 +379,7 @@ func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginE
+ 		}
+ 		sessionCtx, err := dialer.Dial(svr.runID)
+ 		if err != nil {
++			svr.failConnectionAttempt(err)
+ 			xl.Warnf("connect to server error: %v", err)
+ 			if firstLoginExit {
+ 				svr.cancel(cancelErr{Err: err})
+@@ -392,6 +395,7 @@ func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginE
+ 		if err != nil {
+ 			sessionCtx.Conn.Close()
+ 			sessionCtx.Connector.Close()
++			svr.failConnectionAttempt(err)
+ 			xl.Errorf("new control error: %v", err)
+ 			return false, err
+ 		}
+@@ -413,6 +417,7 @@ func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginE
+ 			svr.ctl.Close()
+ 		}
+ 		svr.ctl = ctl
++		svr.completeConnectionAttempt()
+ 		svr.ctlMu.Unlock()
+ 		return true, nil
+ 	}
+diff --git a/client/visitor/stcp.go b/client/visitor/stcp.go
+index 03ec51f..7c33460 100644
+--- a/client/visitor/stcp.go
++++ b/client/visitor/stcp.go
+@@ -21,6 +21,7 @@ import (
+ 	libio "github.com/fatedier/golib/io"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+ )
+ 
+@@ -32,7 +33,7 @@ type STCPVisitor struct {
+ 
+ func (sv *STCPVisitor) Run() (err error) {
+ 	if sv.cfg.BindPort > 0 {
+-		sv.l, err = net.Listen("tcp", net.JoinHostPort(sv.cfg.BindAddr, strconv.Itoa(sv.cfg.BindPort)))
++		sv.l, err = androidnet.Listen("tcp", net.JoinHostPort(sv.cfg.BindAddr, strconv.Itoa(sv.cfg.BindPort)))
+ 		if err != nil {
+ 			return
+ 		}
+diff --git a/client/visitor/sudp.go b/client/visitor/sudp.go
+index f1939bd..a20682d 100644
+--- a/client/visitor/sudp.go
++++ b/client/visitor/sudp.go
+@@ -26,6 +26,7 @@ import (
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
+ 	"github.com/fatedier/frp/pkg/msg"
+ 	"github.com/fatedier/frp/pkg/proto/udp"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+ )
+@@ -51,7 +52,7 @@ func (sv *SUDPVisitor) Run() (err error) {
+ 		return fmt.Errorf("sudp ResolveUDPAddr error: %v", err)
+ 	}
+ 
+-	sv.udpConn, err = net.ListenUDP("udp", addr)
++	sv.udpConn, err = androidnet.ListenUDP("udp", addr, true)
+ 	if err != nil {
+ 		return fmt.Errorf("listen udp port %s error: %v", addr.String(), err)
+ 	}
+diff --git a/client/visitor/xtcp.go b/client/visitor/xtcp.go
+index 114f47b..6fc7a3d 100644
+--- a/client/visitor/xtcp.go
++++ b/client/visitor/xtcp.go
+@@ -34,6 +34,7 @@ import (
+ 	"github.com/fatedier/frp/pkg/naming"
+ 	"github.com/fatedier/frp/pkg/nathole"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ 	"github.com/fatedier/frp/pkg/util/util"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+@@ -61,7 +62,7 @@ func (sv *XTCPVisitor) Run() (err error) {
+ 	}
+ 
+ 	if sv.cfg.BindPort > 0 {
+-		sv.l, err = net.Listen("tcp", net.JoinHostPort(sv.cfg.BindAddr, strconv.Itoa(sv.cfg.BindPort)))
++		sv.l, err = androidnet.Listen("tcp", net.JoinHostPort(sv.cfg.BindAddr, strconv.Itoa(sv.cfg.BindPort)))
+ 		if err != nil {
+ 			return
+ 		}
+@@ -337,7 +338,7 @@ func NewKCPTunnelSession() TunnelSession {
+ func (ks *KCPTunnelSession) Init(listenConn *net.UDPConn, raddr *net.UDPAddr) error {
+ 	listenConn.Close()
+ 	laddr, _ := net.ResolveUDPAddr("udp", listenConn.LocalAddr().String())
+-	lConn, err := net.DialUDP("udp", laddr, raddr)
++	lConn, err := androidnet.DialUDP("udp", laddr, raddr)
+ 	if err != nil {
+ 		return fmt.Errorf("dial udp error: %v", err)
+ 	}
 diff --git a/cmd/frpc/main_android.go b/cmd/frpc/main_android.go
 new file mode 100644
 index 0000000..53977d9
@@ -1333,6 +1020,20 @@ index 0000000..53977d9
 +		}
 +	}()
 +}
+diff --git a/cmd/frpc/sub/root.go b/cmd/frpc/sub/root.go
+index 8a0f184..082fbb5 100644
+--- a/cmd/frpc/sub/root.go
++++ b/cmd/frpc/sub/root.go
+@@ -135,6 +135,9 @@ func runClient(cfgFilePath string, unsafeFeatures *security.UnsafeFeatures) erro
+ 
+ // runClientWithAggregator runs the client using the internal source aggregator.
+ func runClientWithAggregator(result *config.ClientConfigLoadResult, unsafeFeatures *security.UnsafeFeatures, cfgFilePath string) error {
++	if err := applyAndroidRuntimeConfig(result.Common); err != nil {
++		return err
++	}
+ 	configSource := source.NewConfigSource()
+ 	if err := configSource.ReplaceAll(result.Proxies, result.Visitors); err != nil {
+ 		return fmt.Errorf("failed to set config source: %w", err)
 diff --git a/cmd/frpc/sub/runtime_android.go b/cmd/frpc/sub/runtime_android.go
 new file mode 100644
 index 0000000..861746f
@@ -1385,6 +1086,216 @@ index 0000000..3cc6935
 +func applyAndroidRuntimeConfig(_ *v1.ClientCommonConfig) error {
 +	return nil
 +}
+diff --git a/pkg/nathole/discovery.go b/pkg/nathole/discovery.go
+index 241b0f6..be31fc2 100644
+--- a/pkg/nathole/discovery.go
++++ b/pkg/nathole/discovery.go
+@@ -21,6 +21,8 @@ import (
+ 	"time"
+ 
+ 	"github.com/fatedier/golib/net/stun"
++
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ )
+ 
+ var responseTimeout = 3 * time.Second
+@@ -65,7 +67,7 @@ func listen(localAddr string) (*discoverConn, error) {
+ 		}
+ 		local = addr
+ 	}
+-	conn, err := net.ListenUDP("udp4", local)
++	conn, err := androidnet.ListenUDP("udp4", local, false)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+diff --git a/pkg/nathole/nathole.go b/pkg/nathole/nathole.go
+index bea3d37..0bea285 100644
+--- a/pkg/nathole/nathole.go
++++ b/pkg/nathole/nathole.go
+@@ -30,6 +30,7 @@ import (
+ 
+ 	"github.com/fatedier/frp/pkg/msg"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+ )
+ 
+@@ -135,7 +136,7 @@ func Prepare(stunServers []string, opts PrepareOptions) (*PrepareResult, error)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("resolve local udp addr error: %v", err)
+ 	}
+-	listenConn, err := net.ListenUDP("udp4", laddr)
++	listenConn, err := androidnet.ListenUDP("udp4", laddr, false)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("listen local udp addr error: %v", err)
+ 	}
+@@ -213,7 +214,7 @@ func MakeHole(ctx context.Context, listenConn *net.UDPConn, m *msg.NatHoleResp,
+ 
+ 		if m.DetectBehavior.ListenRandomPorts > 0 {
+ 			for i := 0; i < m.DetectBehavior.ListenRandomPorts; i++ {
+-				tmpConn, err := net.ListenUDP("udp4", nil)
++				tmpConn, err := androidnet.ListenUDP("udp4", nil, false)
+ 				if err != nil {
+ 					xl.Warnf("listen random udp addr error: %v", err)
+ 					continue
+diff --git a/pkg/plugin/client/http2https.go b/pkg/plugin/client/http2https.go
+index f5a6160..995d635 100644
+--- a/pkg/plugin/client/http2https.go
++++ b/pkg/plugin/client/http2https.go
+@@ -22,6 +22,7 @@ import (
+ 	"net/http/httputil"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ )
+ 
+ func init() {
+@@ -42,6 +43,7 @@ func NewHTTP2HTTPSPlugin(_ PluginContext, options v1.ClientPluginOptions) (Plugi
+ 	}
+ 
+ 	tr := &http.Transport{
++		DialContext:     androidnet.DialContext,
+ 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+ 	}
+ 
+diff --git a/pkg/plugin/client/http_proxy.go b/pkg/plugin/client/http_proxy.go
+index 0145f44..94c121f 100644
+--- a/pkg/plugin/client/http_proxy.go
++++ b/pkg/plugin/client/http_proxy.go
+@@ -21,7 +21,6 @@ import (
+ 	"context"
+ 	"encoding/base64"
+ 	"io"
+-	"net"
+ 	"net/http"
+ 	"strings"
+ 	"time"
+@@ -30,6 +29,7 @@ import (
+ 	libnet "github.com/fatedier/golib/net"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ 	"github.com/fatedier/frp/pkg/util/util"
+ )
+@@ -174,7 +174,7 @@ func (hp *HTTPProxy) handleConnectReq(req *http.Request, rwc io.ReadWriteCloser)
+ 		return
+ 	}
+ 
+-	remote, err := net.Dial("tcp", req.URL.Host)
++	remote, err := androidnet.DialContext(req.Context(), "tcp", req.URL.Host)
+ 	if err != nil {
+ 		res := &http.Response{
+ 			StatusCode: 400,
+diff --git a/pkg/plugin/client/https2https.go b/pkg/plugin/client/https2https.go
+index 7b9e455..476e665 100644
+--- a/pkg/plugin/client/https2https.go
++++ b/pkg/plugin/client/https2https.go
+@@ -22,6 +22,7 @@ import (
+ 	"net/http/httputil"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ )
+ 
+ func init() {
+@@ -42,6 +43,7 @@ func NewHTTPS2HTTPSPlugin(_ PluginContext, options v1.ClientPluginOptions) (Plug
+ 	}
+ 
+ 	tr := &http.Transport{
++		DialContext:     androidnet.DialContext,
+ 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+ 	}
+ 
+diff --git a/pkg/plugin/client/socks5.go b/pkg/plugin/client/socks5.go
+index 752dd1e..18b3fc4 100644
+--- a/pkg/plugin/client/socks5.go
++++ b/pkg/plugin/client/socks5.go
+@@ -24,6 +24,7 @@ import (
+ 	gosocks5 "github.com/armon/go-socks5"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ )
+ 
+@@ -39,6 +40,7 @@ func NewSocks5Plugin(_ PluginContext, options v1.ClientPluginOptions) (p Plugin,
+ 	opts := options.(*v1.Socks5PluginOptions)
+ 
+ 	cfg := &gosocks5.Config{
++		Dial:   androidnet.DialContext,
+ 		Logger: log.New(io.Discard, "", log.LstdFlags),
+ 	}
+ 	if opts.Username != "" || opts.Password != "" {
+diff --git a/pkg/plugin/client/tls2raw.go b/pkg/plugin/client/tls2raw.go
+index 6ce0542..93fd798 100644
+--- a/pkg/plugin/client/tls2raw.go
++++ b/pkg/plugin/client/tls2raw.go
+@@ -19,12 +19,12 @@ package client
+ import (
+ 	"context"
+ 	"crypto/tls"
+-	"net"
+ 
+ 	libio "github.com/fatedier/golib/io"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+ )
+@@ -65,7 +65,7 @@ func (p *TLS2RawPlugin) Handle(ctx context.Context, connInfo *ConnectionInfo) {
+ 		tlsConn.Close()
+ 		return
+ 	}
+-	rawConn, err := net.Dial("tcp", p.opts.LocalAddr)
++	rawConn, err := androidnet.DialContext(ctx, "tcp", p.opts.LocalAddr)
+ 	if err != nil {
+ 		xl.Warnf("dial to local addr error: %v", err)
+ 		tlsConn.Close()
+diff --git a/pkg/proto/udp/udp.go b/pkg/proto/udp/udp.go
+index ec3bd94..d9fceec 100644
+--- a/pkg/proto/udp/udp.go
++++ b/pkg/proto/udp/udp.go
+@@ -23,6 +23,7 @@ import (
+ 	"github.com/fatedier/golib/pool"
+ 
+ 	"github.com/fatedier/frp/pkg/msg"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ )
+ 
+@@ -120,7 +121,7 @@ func Forwarder(dstAddr *net.UDPAddr, readCh <-chan *msg.UDPPacket, sendCh chan<-
+ 			mu.Lock()
+ 			udpConn, ok := udpConnMap[udpMsg.RemoteAddr.String()]
+ 			if !ok {
+-				udpConn, err = net.DialUDP("udp", nil, dstAddr)
++				udpConn, err = androidnet.DialUDP("udp", nil, dstAddr)
+ 				if err != nil {
+ 					mu.Unlock()
+ 					continue
+diff --git a/pkg/ssh/gateway.go b/pkg/ssh/gateway.go
+index 4d90f33..c7a4d43 100644
+--- a/pkg/ssh/gateway.go
++++ b/pkg/ssh/gateway.go
+@@ -25,6 +25,7 @@ import (
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	"github.com/fatedier/frp/pkg/util/log"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ )
+@@ -90,7 +91,7 @@ func NewGateway(
+ 		}, nil
+ 	}
+ 
+-	ln, err := net.Listen("tcp", net.JoinHostPort(bindAddr, strconv.Itoa(cfg.BindPort)))
++	ln, err := androidnet.Listen("tcp", net.JoinHostPort(bindAddr, strconv.Itoa(cfg.BindPort)))
+ 	if err != nil {
+ 		return nil, err
+ 	}
 diff --git a/pkg/util/androidnet/network.go b/pkg/util/androidnet/network.go
 new file mode 100644
 index 0000000..d5fdfb0
@@ -1783,3 +1694,92 @@ index 0000000..6678a94
 +		})
 +	}
 +}
+diff --git a/pkg/util/http/server.go b/pkg/util/http/server.go
+index 20dc365..732a263 100644
+--- a/pkg/util/http/server.go
++++ b/pkg/util/http/server.go
+@@ -26,6 +26,7 @@ import (
+ 
+ 	"github.com/fatedier/frp/assets"
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ )
+ 
+@@ -88,7 +89,7 @@ func newServer(bindAddr string, port int, user, password string, tlsConfig *v1.T
+ 	s.authMiddleware = netpkg.NewHTTPAuthMiddleware(user, password).SetAuthFailDelay(200 * time.Millisecond).Middleware
+ 
+ 	// Bind only after all fallible preparation so an error cannot leak the listener.
+-	ln, err := net.Listen("tcp", addr)
++	ln, err := androidnet.Listen("tcp", addr)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+diff --git a/pkg/util/net/dns.go b/pkg/util/net/dns.go
+index 441b1e6..ca01753 100644
+--- a/pkg/util/net/dns.go
++++ b/pkg/util/net/dns.go
+@@ -17,6 +17,8 @@ package net
+ import (
+ 	"context"
+ 	"net"
++
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ )
+ 
+ func SetDefaultDNSAddress(dnsAddress string) {
+@@ -27,7 +29,7 @@ func SetDefaultDNSAddress(dnsAddress string) {
+ 	net.DefaultResolver = &net.Resolver{
+ 		PreferGo: true,
+ 		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+-			return net.Dial(network, dnsAddress)
++			return androidnet.DialContext(ctx, network, dnsAddress)
+ 		},
+ 	}
+ }
+diff --git a/pkg/util/net/udp.go b/pkg/util/net/udp.go
+index aa4d983..fc254de 100644
+--- a/pkg/util/net/udp.go
++++ b/pkg/util/net/udp.go
+@@ -23,6 +23,8 @@ import (
+ 	"time"
+ 
+ 	"github.com/fatedier/golib/pool"
++
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ )
+ 
+ type UDPPacket struct {
+@@ -163,7 +165,7 @@ func ListenUDP(bindAddr string, bindPort int) (l *UDPListener, err error) {
+ 	if err != nil {
+ 		return l, err
+ 	}
+-	readConn, err := net.ListenUDP("udp", udpAddr)
++	readConn, err := androidnet.ListenUDP("udp", udpAddr, true)
+ 	if err != nil {
+ 		return l, err
+ 	}
+diff --git a/pkg/util/system/system_android.go b/pkg/util/system/system_android.go
+index 6fcfdbc..c528fca 100644
+--- a/pkg/util/system/system_android.go
++++ b/pkg/util/system/system_android.go
+@@ -20,6 +20,8 @@ import (
+ 	"os/exec"
+ 	"strings"
+ 	"time"
++
++	"github.com/fatedier/frp/pkg/util/androidnet"
+ )
+ 
+ func EnableCompatibilityMode() {
+@@ -44,6 +46,10 @@ func fixTimezone() {
+ // If it is not available, it will default to using 8.8.8.8 as the DNS server.
+ // This is a workaround for the issue that golang can't get the default DNS servers on Android.
+ func fixDNSResolver() {
++	// 指定網路失效時保留失敗，不啟用公共 DNS 回退。
++	if androidnet.Selected() {
++		return
++	}
+ 	// First, we attempt to resolve a domain. If resolution is successful, no modifications are necessary.
+ 	// In real-world scenarios, users may have already configured /etc/resolv.conf, or compiled directly
+ 	// in the Android environment instead of using cross-platform compilation, so this issue does not arise.

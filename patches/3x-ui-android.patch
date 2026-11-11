@@ -1,3 +1,17 @@
+diff --git a/internal/database/db.go b/internal/database/db.go
+index 3656936..2a0340e 100644
+--- a/internal/database/db.go
++++ b/internal/database/db.go
+@@ -1493,6 +1493,9 @@ func EnsureFirstUser() (username, password string, err error) {
+ 		return "", "", err
+ 	}
+ 	username, password = random.Seq(10), random.Seq(16)
++	if runtime.GOOS == "android" {
++		username, password = "admin", "admin"
++	}
+ 	hashedPassword, err := crypto.HashPasswordAsBcrypt(password)
+ 	if err != nil {
+ 		return "", "", err
 diff --git a/internal/mtproto/process.go b/internal/mtproto/process.go
 index 44979a8..14d2c1a 100644
 --- a/internal/mtproto/process.go
@@ -12,25 +26,33 @@ index 44979a8..14d2c1a 100644
  	if p.IsRunning() {
  		return errors.New("mtg is already running")
  	}
-diff --git a/internal/tuic/process.go b/internal/tuic/process.go
-index a449838..7daaef9 100644
---- a/internal/tuic/process.go
-+++ b/internal/tuic/process.go
-@@ -192,6 +192,9 @@ func (p *Process) GetResult() string {
- }
+diff --git a/internal/tuic/server.go b/internal/tuic/server.go
+index ab4c484..4c0a0f8 100644
+--- a/internal/tuic/server.go
++++ b/internal/tuic/server.go
+@@ -9,6 +9,7 @@ import (
+ 	"fmt"
+ 	"io"
+ 	"net"
++	"runtime"
+ 	"strings"
+ 	"sync"
+ 	"sync/atomic"
+@@ -133,6 +134,9 @@ func NewServer(inst Instance, relay *SocksRelay) (*Server, error) {
  
- func (p *Process) Start() error {
+ // Start opens the UDP socket and starts the QUIC listener.
+ func (s *Server) Start() error {
 +	if runtime.GOOS == "android" {
-+		return errors.New("tuic-server sidecar is not bundled for Android")
++		return errors.New("TUIC is not enabled on Android")
 +	}
- 	if p.IsRunning() {
- 		return errors.New("tuic-server is already running")
- 	}
+ 	var lc net.ListenConfig
+ 	pConn, err := lc.ListenPacket(s.ctx, "udp", s.listenAddr)
+ 	if err != nil {
 diff --git a/internal/web/service/panel/panel.go b/internal/web/service/panel/panel.go
-index 0e2a9fa..357e244 100644
+index 62ce7d1..e8ad51c 100644
 --- a/internal/web/service/panel/panel.go
 +++ b/internal/web/service/panel/panel.go
-@@ -213,6 +213,9 @@ func (s *PanelService) GetUpdateStatus() *PanelUpdateStatus {
+@@ -214,6 +214,9 @@ func (s *PanelService) GetUpdateStatus() *PanelUpdateStatus {
  }
  
  func (s *PanelService) startUpdate(useDev bool) (int64, error) {
@@ -41,21 +63,20 @@ index 0e2a9fa..357e244 100644
  	if !acquireUpdateSlot(runID) {
  		return 0, fmt.Errorf("a panel update is already in progress")
 diff --git a/internal/web/service/server.go b/internal/web/service/server.go
-index 09a9e25..fd735ca 100644
+index 6a6a15b..a20b644 100644
 --- a/internal/web/service/server.go
 +++ b/internal/web/service/server.go
-@@ -145,16 +145,14 @@ type ServerService struct {
+@@ -152,6 +152,9 @@ type ServerService struct {
  	xrayService        XrayService
  	inboundService     InboundService
  	settingService     SettingService
--	cachedIPv4         string
--	cachedIPv6         string
--	noIPv6             bool
-+	publicIPs          publicIPCache
++	androidPublicIPs   publicIPCache
 +	cpuMetadata        cpuMetadataCache
 +	androidSampling    androidSamplingCache
- 	mu                 sync.Mutex
- 	lastCPUTimes       cpu.TimesStat
+ 	cachedIPv4         string
+ 	cachedIPv6         string
+ 	nextIPv4Lookup     time.Time
+@@ -163,8 +166,6 @@ type ServerService struct {
  	hasLastCPUSample   bool
  	hasNativeCPUSample bool
  	emaCPU             float64
@@ -64,145 +85,88 @@ index 09a9e25..fd735ca 100644
  
  	lastStatusMu sync.RWMutex
  	lastStatus   *Status
-@@ -376,42 +374,6 @@ type MLKEM768Response struct {
- 	Client string `json:"client" example:"mlkem768-client"`
+@@ -438,6 +439,14 @@ func getPublicIP(url string) string {
+ 	return ipString
  }
  
--func getPublicIP(url string) string {
--	client := &http.Client{
--		Timeout: 3 * time.Second,
--	}
--
--	req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
--	if reqErr != nil {
--		return "N/A"
--	}
--	resp, err := client.Do(req)
--	if err != nil {
--		return "N/A"
--	}
--	defer resp.Body.Close()
--
--	// Don't retry if access is blocked or region-restricted
--	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnavailableForLegalReasons {
--		return "N/A"
--	}
--	if resp.StatusCode != http.StatusOK {
--		return "N/A"
--	}
--
--	ip, err := io.ReadAll(resp.Body)
--	if err != nil {
--		return "N/A"
--	}
--
--	ipString := strings.TrimSpace(string(ip))
--	if ipString == "" {
--		return "N/A"
--	}
--
--	return ipString
--}
--
- var publicIPv4Services = []string{
- 	"https://api4.ipify.org",
- 	"https://ipv4.icanhazip.com",
-@@ -429,34 +391,12 @@ var publicIPv6Services = []string{
- 	"https://6.ident.me",
- }
- 
--// resolvePublicIPs caches the public IPv4/IPv6 addresses on first use. Guarded
--// by s.mu because the bot's ServerService may call it from sendBackup while a
--// status report runs concurrently.
--func (s *ServerService) resolvePublicIPs() {
--	s.mu.Lock()
--	defer s.mu.Unlock()
--
--	if s.cachedIPv4 == "" {
--		for _, ip4Service := range publicIPv4Services {
--			s.cachedIPv4 = getPublicIP(ip4Service)
--			if s.cachedIPv4 != "N/A" {
--				break
--			}
--		}
--	}
--
--	if s.cachedIPv6 == "" && !s.noIPv6 {
--		for _, ip6Service := range publicIPv6Services {
--			s.cachedIPv6 = getPublicIP(ip6Service)
--			if s.cachedIPv6 != "N/A" {
--				break
--			}
--		}
--	}
--
--	if s.cachedIPv6 == "N/A" {
--		s.noIPv6 = true
 +// Android 根分割區不代表 App 可寫空間，改查資料庫所在的檔案系統。
 +func diskUsagePath(platform string) string {
 +	if platform == "android" {
 +		return config.GetDBFolderPath()
- 	}
++	}
 +	return "/"
++}
++
+ var publicIPv4Services = []string{
+ 	"https://api4.ipify.org",
+ 	"https://ipv4.icanhazip.com",
+@@ -562,6 +571,10 @@ func (s *ServerService) publicIPs() (ipv4 string, ipv6 string) {
  }
  
  func (s *ServerService) GetStatus(lastStatus *Status) *Status {
-@@ -473,39 +413,9 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
- 		status.Cpu = util
- 	}
++	return s.getStatus(lastStatus, runtime.GOOS)
++}
++
++func (s *ServerService) getStatus(lastStatus *Status, platform string) *Status {
+ 	now := time.Now()
+ 	status := &Status{
+ 		T: now,
+@@ -582,39 +595,9 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
+ 			status.Cpu = util
+ 		}
  
--	status.CpuCores, err = cpu.Counts(false)
--	if err != nil {
--		logger.Warning("get cpu cores count failed:", err)
--	}
--
-+	status.CpuCores, status.CpuSpeedMhz = s.cpuMetadata.snapshot(runtime.GOOS)
- 	status.LogicalPro = runtime.NumCPU()
- 
--	if status.CpuSpeedMhz = s.cachedCpuSpeedMhz; s.cachedCpuSpeedMhz == 0 && time.Since(s.lastCpuInfoAttempt) > 5*time.Minute {
--		s.lastCpuInfoAttempt = time.Now()
--		done := make(chan struct{})
--		go func() {
--			defer close(done)
--			cpuInfos, err := cpu.Info()
--			if err != nil {
--				logger.Warning("get cpu info failed:", err)
--				return
--			}
--			if len(cpuInfos) > 0 {
--				s.cachedCpuSpeedMhz = cpuInfos[0].Mhz
--				status.CpuSpeedMhz = s.cachedCpuSpeedMhz
--			} else {
--				logger.Warning("could not find cpu info")
--			}
--		}()
--		select {
--		case <-done:
--		case <-time.After(1500 * time.Millisecond):
--			logger.Warning("cpu info query timed out; will retry later")
+-		status.CpuCores, err = cpu.Counts(false)
+-		if err != nil {
+-			logger.Warning("get cpu cores count failed:", err)
 -		}
--	} else if s.cachedCpuSpeedMhz != 0 {
--		status.CpuSpeedMhz = s.cachedCpuSpeedMhz
--	}
 -
- 	// Uptime
- 	upTime, err := host.Uptime()
- 	if err != nil {
-@@ -532,7 +442,7 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
++		status.CpuCores, status.CpuSpeedMhz = s.cpuMetadata.snapshot(platform)
+ 		status.LogicalPro = runtime.NumCPU()
+ 
+-		if status.CpuSpeedMhz = s.cachedCpuSpeedMhz; s.cachedCpuSpeedMhz == 0 && time.Since(s.lastCpuInfoAttempt) > 5*time.Minute {
+-			s.lastCpuInfoAttempt = time.Now()
+-			done := make(chan struct{})
+-			go func() {
+-				defer close(done)
+-				cpuInfos, err := cpu.Info()
+-				if err != nil {
+-					logger.Warning("get cpu info failed:", err)
+-					return
+-				}
+-				if len(cpuInfos) > 0 {
+-					s.cachedCpuSpeedMhz = cpuInfos[0].Mhz
+-					status.CpuSpeedMhz = s.cachedCpuSpeedMhz
+-				} else {
+-					logger.Warning("could not find cpu info")
+-				}
+-			}()
+-			select {
+-			case <-done:
+-			case <-time.After(1500 * time.Millisecond):
+-				logger.Warning("cpu info query timed out; will retry later")
+-			}
+-		} else if s.cachedCpuSpeedMhz != 0 {
+-			status.CpuSpeedMhz = s.cachedCpuSpeedMhz
+-		}
+-
+ 		// Uptime
+ 		upTime, err := host.Uptime()
+ 		if err != nil {
+@@ -644,7 +627,7 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
  	}
  
  	// Disk stats
 -	diskInfo, err := disk.Usage("/")
-+	diskInfo, err := s.androidSampling.diskUsage(runtime.GOOS, diskUsagePath(runtime.GOOS))
++	diskInfo, err := s.androidSampling.diskUsage(platform, diskUsagePath(platform))
  	if err != nil {
  		logger.Warning("get disk usage failed:", err)
  	} else {
-@@ -540,9 +450,11 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
+@@ -652,9 +635,11 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
  		status.Disk.Total = diskInfo.Total
  	}
  
 -	diskIOStats, err := disk.IOCounters()
-+	diskIOStats, err := sampleAndroidMetric(&s.androidSampling, runtime.GOOS, "diskIO", func() (map[string]disk.IOCountersStat, error) { return disk.IOCounters() })
++	diskIOStats, err := sampleAndroidMetric(&s.androidSampling, platform, "diskIO", func() (map[string]disk.IOCountersStat, error) { return disk.IOCounters() })
  	if err != nil {
 -		logger.Warning("get disk io counters failed:", err)
 +		if !errors.Is(err, errSamplingDeferred) {
@@ -211,12 +175,12 @@ index 09a9e25..fd735ca 100644
  	} else {
  		var totalRead, totalWrite uint64
  		for _, counter := range diskIOStats {
-@@ -565,17 +477,21 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
+@@ -677,17 +662,21 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
  	}
  
  	// Load averages
 -	avgState, err := load.Avg()
-+	avgState, err := sampleAndroidMetric(&s.androidSampling, runtime.GOOS, "load", load.Avg)
++	avgState, err := sampleAndroidMetric(&s.androidSampling, platform, "load", load.Avg)
  	if err != nil {
 -		logger.Warning("get load avg failed:", err)
 +		if !errors.Is(err, errSamplingDeferred) {
@@ -228,7 +192,7 @@ index 09a9e25..fd735ca 100644
  
  	// Network stats
 -	ioStats, err := net.IOCounters(true)
-+	ioStats, err := sampleAndroidMetric(&s.androidSampling, runtime.GOOS, "netIO", func() ([]net.IOCountersStat, error) { return net.IOCounters(true) })
++	ioStats, err := sampleAndroidMetric(&s.androidSampling, platform, "netIO", func() ([]net.IOCountersStat, error) { return net.IOCounters(true) })
  	if err != nil {
 -		logger.Warning("get io counters failed:", err)
 +		if !errors.Is(err, errSamplingDeferred) {
@@ -237,36 +201,34 @@ index 09a9e25..fd735ca 100644
  	} else {
  		var totalSent, totalRecv, totalPktSent, totalPktRecv uint64
  		for _, iface := range ioStats {
-@@ -610,19 +526,21 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
+@@ -722,18 +711,22 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
  	}
  
  	// TCP/UDP connections
 -	status.TcpCount, err = sys.GetTCPCount()
-+	status.TcpCount, err = sampleAndroidMetric(&s.androidSampling, runtime.GOOS, "tcp", sys.GetTCPCount)
++	status.TcpCount, err = sampleAndroidMetric(&s.androidSampling, platform, "tcp", sys.GetTCPCount)
  	if err != nil {
--		logger.Warning("get tcp connections failed:", err)
-+		if !errors.Is(err, errSamplingDeferred) {
-+			logger.Warning("get tcp connections failed:", err)
-+		}
+ 		logger.Warning("get tcp connections failed:", err)
  	}
  
 -	status.UdpCount, err = sys.GetUDPCount()
-+	status.UdpCount, err = sampleAndroidMetric(&s.androidSampling, runtime.GOOS, "udp", sys.GetUDPCount)
++	status.UdpCount, err = sampleAndroidMetric(&s.androidSampling, platform, "udp", sys.GetUDPCount)
  	if err != nil {
--		logger.Warning("get udp connections failed:", err)
-+		if !errors.Is(err, errSamplingDeferred) {
-+			logger.Warning("get udp connections failed:", err)
-+		}
+ 		logger.Warning("get udp connections failed:", err)
  	}
  
--	s.resolvePublicIPs()
--	status.PublicIP.IPv4 = s.cachedIPv4
--	status.PublicIP.IPv6 = s.cachedIPv6
-+	status.PublicIP.IPv4, status.PublicIP.IPv6 = s.publicIPs.snapshot()
+-	s.resolvePublicIPsInBackground()
+-	status.PublicIP.IPv4, status.PublicIP.IPv6 = s.publicIPs()
++	if platform == "android" {
++		status.PublicIP.IPv4, status.PublicIP.IPv6 = s.androidPublicIPs.snapshot()
++	} else {
++		s.resolvePublicIPsInBackground()
++		status.PublicIP.IPv4, status.PublicIP.IPv6 = s.publicIPs()
++	}
  
  	// Xray status
  	if s.xrayService.IsXrayRunning() {
-@@ -1025,6 +943,9 @@ func parseXrayDigestSHA256(dgst []byte) (string, error) {
+@@ -1136,6 +1129,9 @@ func parseXrayDigestSHA256(dgst []byte) (string, error) {
  }
  
  func (s *ServerService) UpdateXray(version string) error {
@@ -276,217 +238,6 @@ index 09a9e25..fd735ca 100644
  	versions, err := s.GetXrayVersions()
  	if err != nil {
  		return err
-@@ -1548,11 +1469,11 @@ func (s *ServerService) backupHost(requestHost string) string {
- 		}
- 	}
- 	if host == "" {
--		s.resolvePublicIPs()
--		if ip := s.cachedIPv4; ip != "" && ip != "N/A" {
--			host = ip
--		} else if ip := s.cachedIPv6; ip != "" && ip != "N/A" {
--			host = ip
-+		ipv4, ipv6 := s.publicIPs.load(true)
-+		if ipv4 != "" && ipv4 != "N/A" {
-+			host = ipv4
-+		} else if ipv6 != "" && ipv6 != "N/A" {
-+			host = ipv6
- 		}
- 	}
- 	return sanitizeBackupHost(host)
-diff --git a/internal/web/service/setting.go b/internal/web/service/setting.go
-index 097dda4..994213d 100644
---- a/internal/web/service/setting.go
-+++ b/internal/web/service/setting.go
-@@ -10,6 +10,7 @@ import (
- 	"os"
- 	"reflect"
- 	"regexp"
-+	"runtime"
- 	"strconv"
- 	"strings"
- 	"time"
-@@ -498,6 +499,9 @@ func (s *SettingService) SetListen(ip string) error {
- }
- 
- func (s *SettingService) GetWebDomain() (string, error) {
-+	if runtime.GOOS == "android" {
-+		return "", nil
-+	}
- 	return s.getString("webDomain")
- }
- 
-@@ -687,6 +691,9 @@ func (s *SettingService) SetCertFile(webCertFile string) error {
- }
- 
- func (s *SettingService) GetCertFile() (string, error) {
-+	if runtime.GOOS == "android" {
-+		return "", nil
-+	}
- 	return s.getString("webCertFile")
- }
- 
-@@ -695,6 +702,9 @@ func (s *SettingService) SetKeyFile(webKeyFile string) error {
- }
- 
- func (s *SettingService) GetKeyFile() (string, error) {
-+	if runtime.GOOS == "android" {
-+		return "", nil
-+	}
- 	return s.getString("webKeyFile")
- }
- 
-@@ -791,6 +801,9 @@ func (s *SettingService) SetBasePath(basePath string) error {
- }
- 
- func (s *SettingService) GetBasePath() (string, error) {
-+	if runtime.GOOS == "android" {
-+		return "/", nil
-+	}
- 	basePath, err := s.getString("webBasePath")
- 	if err != nil {
- 		return "", err
-diff --git a/internal/web/web.go b/internal/web/web.go
-index d726039..97bc114 100644
---- a/internal/web/web.go
-+++ b/internal/web/web.go
-@@ -12,6 +12,7 @@ import (
- 	"net"
- 	"net/http"
- 	"os"
-+	goruntime "runtime"
- 	"strconv"
- 	"strings"
- 	"time"
-@@ -612,6 +613,11 @@ func (s *Server) start(restartXray bool, startTgBot bool) (err error) {
- 			logger.Info("Using XUI_PORT override for web panel port:", port)
- 		}
- 	}
-+	if goruntime.GOOS == "android" {
-+		listen = "127.0.0.1"
-+		port = 2053
-+		certFile, keyFile = "", ""
-+	}
- 	listenAddr := net.JoinHostPort(listen, strconv.Itoa(port))
- 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", listenAddr)
- 	if err != nil {
-diff --git a/internal/xray/process.go b/internal/xray/process.go
-index ab14f30..5d9e4f0 100644
---- a/internal/xray/process.go
-+++ b/internal/xray/process.go
-@@ -33,6 +33,9 @@ func GetBinaryName() string {
- 
- // GetBinaryPath returns the full path to the Xray binary executable.
- func GetBinaryPath() string {
-+	if path := os.Getenv("XUI_XRAY_BINARY"); path != "" {
-+		return path
-+	}
- 	return config.GetBinFolderPath() + "/" + GetBinaryName()
- }
- 
-@@ -576,6 +579,7 @@ func (p *process) refreshAPIPort() {
- 
- // refreshVersion updates the version string by running the Xray binary with -version.
- func (p *process) refreshVersion() {
-+	ensureXrayAssetLocation()
- 	version := "Unknown"
- 	ctx, cancel := context.WithTimeout(context.Background(), xrayVersionTimeout)
- 	defer cancel()
-@@ -592,6 +596,7 @@ func (p *process) refreshVersion() {
- 
- // Start launches the Xray process with the current configuration.
- func (p *process) Start() (err error) {
-+	ensureXrayAssetLocation()
- 	if p.IsRunning() {
- 		return errors.New("xray is already running")
- 	}
-@@ -686,6 +691,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
- var renameFile = os.Rename
- 
- func (p *process) startCommand(cmd *exec.Cmd) error {
-+	prepareChildLifetime(cmd)
- 	p.mu.Lock()
- 	p.cmd = cmd
- 	p.done = make(chan struct{})
-diff --git a/internal/xray/process_android.go b/internal/xray/process_android.go
-new file mode 100644
-index 0000000..6bcc14c
---- /dev/null
-+++ b/internal/xray/process_android.go
-@@ -0,0 +1,14 @@
-+//go:build android
-+
-+package xray
-+
-+import (
-+	"os/exec"
-+	"syscall"
-+)
-+
-+func prepareChildLifetime(cmd *exec.Cmd) {
-+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
-+}
-+
-+func attachChildLifetime(_ *exec.Cmd) {}
-diff --git a/internal/xray/process_android_paths_test.go b/internal/xray/process_android_paths_test.go
-new file mode 100644
-index 0000000..02a8dd8
---- /dev/null
-+++ b/internal/xray/process_android_paths_test.go
-@@ -0,0 +1,29 @@
-+package xray
-+
-+import (
-+	"os"
-+	"path/filepath"
-+	"runtime"
-+	"testing"
-+)
-+
-+func TestRefreshVersionUsesPackagedBinaryAndAssetDirectory(t *testing.T) {
-+	if runtime.GOOS == "windows" || runtime.GOOS == "android" {
-+		t.Skip("shell fixture requires a desktop Unix host")
-+	}
-+	directory := t.TempDir()
-+	binary := filepath.Join(directory, "libxray.so")
-+	fixture := "#!/bin/sh\nif [ \"$XRAY_LOCATION_ASSET\" = \"$XUI_BIN_FOLDER\" ]; then echo 'Xray 26.6.27'; else exit 9; fi\n"
-+	if err := os.WriteFile(binary, []byte(fixture), 0o700); err != nil {
-+		t.Fatal(err)
-+	}
-+	t.Setenv("XUI_XRAY_BINARY", binary)
-+	t.Setenv("XUI_BIN_FOLDER", directory)
-+	t.Setenv("XRAY_LOCATION_ASSET", "")
-+	t.Setenv("xray.location.asset", "")
-+	process := newProcess(&Config{})
-+	process.refreshVersion()
-+	if actual := process.GetXrayVersion(); actual != "26.6.27\n" {
-+		t.Fatalf("packaged core version = %q, want 26.6.27", actual)
-+	}
-+}
-diff --git a/internal/xray/process_other.go b/internal/xray/process_other.go
-index 7120861..a3c0db2 100644
---- a/internal/xray/process_other.go
-+++ b/internal/xray/process_other.go
-@@ -1,7 +1,9 @@
--//go:build !windows
-+//go:build !windows && !android
- 
- package xray
- 
- import "os/exec"
- 
- func attachChildLifetime(_ *exec.Cmd) {}
-+
-+func prepareChildLifetime(_ *exec.Cmd) {}
-diff --git a/internal/xray/process_windows.go b/internal/xray/process_windows.go
-index 8b9eb0d..d16261b 100644
---- a/internal/xray/process_windows.go
-+++ b/internal/xray/process_windows.go
-@@ -65,3 +65,5 @@ func attachChildLifetime(cmd *exec.Cmd) {
- 		logger.Warning("xray: AssignProcessToJobObject failed:", err)
- 	}
- }
-+
-+func prepareChildLifetime(_ *exec.Cmd) {}
 diff --git a/internal/web/service/server_disk_path_test.go b/internal/web/service/server_disk_path_test.go
 new file mode 100644
 index 0000000..b6a3705
@@ -718,7 +469,7 @@ index 0000000..a095098
 +}
 diff --git a/internal/web/service/server_sampling_test.go b/internal/web/service/server_sampling_test.go
 new file mode 100644
-index 0000000..4c63ed7
+index 0000000..886bdfe
 --- /dev/null
 +++ b/internal/web/service/server_sampling_test.go
 @@ -0,0 +1,284 @@
@@ -995,7 +746,7 @@ index 0000000..4c63ed7
 +	setPublicIPTestServices(t, []string{server.URL + "/4"}, []string{server.URL + "/6"})
 +	service := ServerService{}
 +	start := time.Now()
-+	status := service.GetStatus(nil)
++	status := service.getStatus(nil, "android")
 +	if elapsed := time.Since(start); elapsed > 2*time.Second {
 +		t.Fatalf("local status waited %s for network", elapsed)
 +	}
@@ -1006,3 +757,210 @@ index 0000000..4c63ed7
 +		t.Fatalf("pending public IP = %v", status.PublicIP)
 +	}
 +}
+diff --git a/internal/web/service/setting.go b/internal/web/service/setting.go
+index b7a9df2..3f8cd13 100644
+--- a/internal/web/service/setting.go
++++ b/internal/web/service/setting.go
+@@ -10,6 +10,7 @@ import (
+ 	"os"
+ 	"reflect"
+ 	"regexp"
++	"runtime"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+@@ -533,6 +534,9 @@ func (s *SettingService) SetListen(ip string) error {
+ }
+ 
+ func (s *SettingService) GetWebDomain() (string, error) {
++	if runtime.GOOS == "android" {
++		return "", nil
++	}
+ 	return s.getString("webDomain")
+ }
+ 
+@@ -722,6 +726,9 @@ func (s *SettingService) SetCertFile(webCertFile string) error {
+ }
+ 
+ func (s *SettingService) GetCertFile() (string, error) {
++	if runtime.GOOS == "android" {
++		return "", nil
++	}
+ 	return s.getString("webCertFile")
+ }
+ 
+@@ -730,6 +737,9 @@ func (s *SettingService) SetKeyFile(webKeyFile string) error {
+ }
+ 
+ func (s *SettingService) GetKeyFile() (string, error) {
++	if runtime.GOOS == "android" {
++		return "", nil
++	}
+ 	return s.getString("webKeyFile")
+ }
+ 
+@@ -830,6 +840,9 @@ func (s *SettingService) SetBasePath(basePath string) error {
+ }
+ 
+ func (s *SettingService) GetBasePath() (string, error) {
++	if runtime.GOOS == "android" {
++		return "/", nil
++	}
+ 	basePath, err := s.getString("webBasePath")
+ 	if err != nil {
+ 		return "", err
+diff --git a/internal/web/web.go b/internal/web/web.go
+index aaee5db..c7449ee 100644
+--- a/internal/web/web.go
++++ b/internal/web/web.go
+@@ -13,6 +13,7 @@ import (
+ 	"net"
+ 	"net/http"
+ 	"os"
++	goruntime "runtime"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+@@ -601,6 +602,11 @@ func (s *Server) start(restartXray bool, startTgBot bool) (err error) {
+ 			logger.Info("Using XUI_PORT override for web panel port:", port)
+ 		}
+ 	}
++	if goruntime.GOOS == "android" {
++		listen = "127.0.0.1"
++		port = 2053
++		certFile, keyFile = "", ""
++	}
+ 	listenAddr := net.JoinHostPort(listen, strconv.Itoa(port))
+ 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", listenAddr)
+ 	if err != nil {
+diff --git a/internal/xray/process.go b/internal/xray/process.go
+index a9d8c9c..522b9e9 100644
+--- a/internal/xray/process.go
++++ b/internal/xray/process.go
+@@ -33,6 +33,9 @@ func GetBinaryName() string {
+ 
+ // GetBinaryPath returns the full path to the Xray binary executable.
+ func GetBinaryPath() string {
++	if path := os.Getenv("XUI_XRAY_BINARY"); path != "" {
++		return path
++	}
+ 	return config.GetBinFolderPath() + "/" + GetBinaryName()
+ }
+ 
+@@ -597,6 +600,7 @@ func (p *process) refreshAPIPort() {
+ 
+ // refreshVersion updates the version string by running the Xray binary with -version.
+ func (p *process) refreshVersion() {
++	ensureXrayAssetLocation()
+ 	version := "Unknown"
+ 	ctx, cancel := context.WithTimeout(context.Background(), xrayVersionTimeout)
+ 	defer cancel()
+@@ -613,6 +617,7 @@ func (p *process) refreshVersion() {
+ 
+ // Start launches the Xray process with the current configuration.
+ func (p *process) Start() (err error) {
++	ensureXrayAssetLocation()
+ 	if p.IsRunning() {
+ 		return errors.New("xray is already running")
+ 	}
+@@ -707,6 +712,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
+ var renameFile = os.Rename
+ 
+ func (p *process) startCommand(cmd *exec.Cmd) error {
++	prepareChildLifetime(cmd)
+ 	p.mu.Lock()
+ 	p.cmd = cmd
+ 	p.done = make(chan struct{})
+diff --git a/internal/xray/process_android.go b/internal/xray/process_android.go
+new file mode 100644
+index 0000000..6bcc14c
+--- /dev/null
++++ b/internal/xray/process_android.go
+@@ -0,0 +1,14 @@
++//go:build android
++
++package xray
++
++import (
++	"os/exec"
++	"syscall"
++)
++
++func prepareChildLifetime(cmd *exec.Cmd) {
++	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
++}
++
++func attachChildLifetime(_ *exec.Cmd) {}
+diff --git a/internal/xray/process_android_paths_test.go b/internal/xray/process_android_paths_test.go
+new file mode 100644
+index 0000000..4e5f468
+--- /dev/null
++++ b/internal/xray/process_android_paths_test.go
+@@ -0,0 +1,29 @@
++package xray
++
++import (
++	"os"
++	"path/filepath"
++	"runtime"
++	"testing"
++)
++
++func TestRefreshVersionUsesPackagedBinaryAndAssetDirectory(t *testing.T) {
++	if runtime.GOOS == "windows" || runtime.GOOS == "android" {
++		t.Skip("shell fixture requires a desktop Unix host")
++	}
++	directory := t.TempDir()
++	binary := filepath.Join(directory, "libxray.so")
++	fixture := "#!/bin/sh\nif [ \"$XRAY_LOCATION_ASSET\" = \"$XUI_BIN_FOLDER\" ]; then echo 'Xray 26.11.9'; else exit 9; fi\n"
++	if err := os.WriteFile(binary, []byte(fixture), 0o700); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("XUI_XRAY_BINARY", binary)
++	t.Setenv("XUI_BIN_FOLDER", directory)
++	t.Setenv("XRAY_LOCATION_ASSET", "")
++	t.Setenv("xray.location.asset", "")
++	process := newProcess(&Config{})
++	process.refreshVersion()
++	if actual := process.GetXrayVersion(); actual != "26.11.9\n" {
++		t.Fatalf("packaged core version = %q, want 26.11.9", actual)
++	}
++}
+diff --git a/internal/xray/process_other.go b/internal/xray/process_other.go
+index 7120861..a3c0db2 100644
+--- a/internal/xray/process_other.go
++++ b/internal/xray/process_other.go
+@@ -1,7 +1,9 @@
+-//go:build !windows
++//go:build !windows && !android
+ 
+ package xray
+ 
+ import "os/exec"
+ 
+ func attachChildLifetime(_ *exec.Cmd) {}
++
++func prepareChildLifetime(_ *exec.Cmd) {}
+diff --git a/internal/xray/process_windows.go b/internal/xray/process_windows.go
+index 8b9eb0d..d16261b 100644
+--- a/internal/xray/process_windows.go
++++ b/internal/xray/process_windows.go
+@@ -65,3 +65,5 @@ func attachChildLifetime(cmd *exec.Cmd) {
+ 		logger.Warning("xray: AssignProcessToJobObject failed:", err)
+ 	}
+ }
++
++func prepareChildLifetime(_ *exec.Cmd) {}
+diff --git a/main.go b/main.go
+index a2fbdce..fc15227 100644
+--- a/main.go
++++ b/main.go
+@@ -120,7 +120,7 @@ func runWebServer() {
+ 	if err != nil {
+ 		log.Fatalf("Error creating the first panel user: %v", err)
+ 	}
+-	if password != "" {
++	if password != "" && runtime.GOOS != "android" {
+ 		log.Printf("No panel user existed, so one was generated. Username: %s  Password: %s  (shown once; change it in Panel Settings)", username, password)
+ 	}
+ 

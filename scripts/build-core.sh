@@ -2,22 +2,23 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-UPSTREAM="$PROJECT_ROOT/upstream/3x-ui"
-UPSTREAM_COMMIT="7ef22f94c950ff09f0870e2295fa65ad5968742c"
-XRAY_VERSION="v26.6.27"
-XRAY_SOURCE="$PROJECT_ROOT/upstream/Xray-core"
-XRAY_COMMIT="45cf2898ab12e97a55dd8f1f3d78d903340bdc9e"
-XRAY_SHA256="9621d72c2f706f47d7bc3c79b5326c12aa29d29013beada1c60df84ff8fe3a0f"
-XRAY_DGST_SHA256="3ccf5810df31b013b73bc05f6391d0a5f0687a4d322e9cf86f2eeabd9892558b"
+UPSTREAM_VERSION="v3.11.0"
+UPSTREAM="$PROJECT_ROOT/upstream/3x-ui-$UPSTREAM_VERSION"
+UPSTREAM_COMMIT="c621ba9014a6aa21fd7c9ecf45655e44e24ebf13"
+XRAY_VERSION="v26.11.9"
+XRAY_SOURCE="$PROJECT_ROOT/upstream/Xray-core-$XRAY_VERSION"
+XRAY_COMMIT="676eaf66f8f05d4d558ee7a74b4736623d3feeb9"
+XRAY_SHA256="edcefc25b9b3195b11e18624c8269a969d6aabc39c6298a9a5ab29de15d46f3b"
+XRAY_DGST_SHA256="e6b8fb07f1eceb36641badf845bcf880cdd93d21802f662be6aa922e01933e16"
 CACHE_DIR="$PROJECT_ROOT/.core-cache"
 ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-/opt/homebrew/share/android-ndk}"
 
 if [[ ! -d "$UPSTREAM/.git" ]]; then
     mkdir -p "$(dirname "$UPSTREAM")"
-    git clone --branch v3.8.5 --depth 1 https://github.com/MHSanaei/3x-ui.git "$UPSTREAM"
+    git clone --branch "$UPSTREAM_VERSION" --depth 1 https://github.com/MHSanaei/3x-ui.git "$UPSTREAM"
 fi
 if [[ "$(git -C "$UPSTREAM" rev-parse HEAD)" != "$UPSTREAM_COMMIT" ]]; then
-    echo "Unexpected 3x-ui source commit; use the pinned v3.8.5 checkout." >&2
+    echo "Unexpected 3x-ui source commit; use the pinned $UPSTREAM_VERSION checkout." >&2
     exit 1
 fi
 if git -C "$UPSTREAM" apply --check "$PROJECT_ROOT/patches/3x-ui-android.patch" 2>/dev/null; then
@@ -32,7 +33,7 @@ if [[ ! -d "$XRAY_SOURCE/.git" ]]; then
     git clone --branch "$XRAY_VERSION" --depth 1 https://github.com/XTLS/Xray-core.git "$XRAY_SOURCE"
 fi
 if [[ "$(git -C "$XRAY_SOURCE" rev-parse HEAD)" != "$XRAY_COMMIT" ]]; then
-    echo "Unexpected Xray source commit; use the pinned v26.6.27 checkout." >&2
+    echo "Unexpected Xray source commit; use the pinned $XRAY_VERSION checkout." >&2
     exit 1
 fi
 if git -C "$XRAY_SOURCE" apply --check "$PROJECT_ROOT/patches/xray-android-network.patch" 2>/dev/null; then
@@ -52,10 +53,10 @@ if [[ ! -x "$CC_PATH" ]]; then
     echo "Android NDK compiler not found: $CC_PATH" >&2
     exit 1
 fi
-node -e 'if (Number(process.versions.node.split(".")[0]) < 24) process.exit(1)'
+node -e 'if (Number(process.versions.node.split(".")[0]) < 26) process.exit(1)'
 go version
 mkdir -p "$CACHE_DIR" "$PROJECT_ROOT/app/src/main/jniLibs/arm64-v8a" "$PROJECT_ROOT/app/src/main/assets/core"
-ZIP="$CACHE_DIR/Xray-android-arm64-v8a.zip"
+ZIP="$CACHE_DIR/Xray-$XRAY_VERSION-android-arm64-v8a.zip"
 DGST="$ZIP.dgst"
 URL="https://github.com/XTLS/Xray-core/releases/download/$XRAY_VERSION/Xray-android-arm64-v8a.zip"
 [[ -f "$ZIP" ]] || curl --fail --location --retry 3 "$URL" --output "$ZIP"
@@ -85,4 +86,4 @@ cp "$UPSTREAM/LICENSE" "$PROJECT_ROOT/app/src/main/assets/licenses/3x-ui/LICENSE
         -o "$PROJECT_ROOT/app/src/main/jniLibs/arm64-v8a/libxui.so" .
 )
 "$PROJECT_ROOT/scripts/build-frpc.sh"
-echo "Built Android arm64 3x-ui v3.8.5, Xray $XRAY_VERSION with Android network binding, and frpc v0.71.0."
+echo "Built Android arm64 3x-ui $UPSTREAM_VERSION, Xray $XRAY_VERSION with Android network binding, and frpc v0.72.0."

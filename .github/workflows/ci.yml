@@ -1,10 +1,10 @@
-# GitHub Actions：主線與 PR 的快速檢查（ktlint、lint、單元測試、字串資源同步）。
+# GitHub Actions：主線、preview 與 PR 的快速檢查（ktlint、lint、單元測試、字串資源同步）。
 # 原生核心建置另見 ci-core.yml；實機儀器測試與發布流程維持 AGENTS.md 的本地手動流程。
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, preview]
   pull_request:
   workflow_dispatch:
 

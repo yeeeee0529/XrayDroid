@@ -16,9 +16,9 @@ android {
         versionCode = 5
         versionName = "0.4.0"
         ndk { abiFilters += "arm64-v8a" }
-        buildConfigField("String", "XUI_VERSION", "\"3.8.5\"")
-        buildConfigField("String", "XRAY_VERSION", "\"26.6.27\"")
-        buildConfigField("String", "FRP_VERSION", "\"0.71.0\"")
+        buildConfigField("String", "XUI_VERSION", "\"3.11.0\"")
+        buildConfigField("String", "XRAY_VERSION", "\"26.11.9\"")
+        buildConfigField("String", "FRP_VERSION", "\"0.72.0\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures {

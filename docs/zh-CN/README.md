@@ -12,9 +12,15 @@
 - 目前不支持 MTProto / TUIC 边车进程与面板／Xray 自行更新。
 - Android 无法读取的系统统计以警告或零值处理；Linux 的 systemd、Fail2ban、syslog、安装器不属于 App 功能，部分上游菜单仍可能显示。
 
+## 核心基准
+
+`preview` 分支固定使用 3x-ui v3.11.0、Xray-core v26.11.9 与 frpc v0.72.0。上游源码和 Xray 下载缓存按版本分目录保存，保留旧 checkout，并验证固定 SHA256。
+
+Android 新数据库保留首次登录 `admin`／`admin`，现有账号不变；不将上游首次随机账号密码写入 Android 日志。协议验证包括 Shadowsocks AEAD／SS2022 TCP／UDP、VLESS＋RAW＋REALITY＋Vision，以及 Hysteria 2 TCP／UDP；实际结果和限制见[验证记录](../PROGRESS.md)。
+
 ## 构建
 
-准备 JDK 17、Android SDK 36、Build Tools 36.0.0、NDK r30、Go 1.27.1、Node.js 24 以上、npm、Python 3.11 以上、Git、curl。
+准备 JDK 17、Android SDK 36、Build Tools 36.0.0、NDK r30、Go 1.27.3、Node.js 26 以上、npm、Python 3.11 以上、Git、curl。
 
 ```bash
 export JAVA_HOME="$(/usr/libexec/java_home -v 17)"
@@ -107,6 +113,14 @@ frpc 设备测试涵盖 TCP／UDP 实际往返、断线重连、独立启停、�
 设备测试请使用隔离安装包与开发设备；现有正式包须先停止服务以释放固定面板端口，测试不会移除正式包的数据。已执行项目与限制见[进度记录](../PROGRESS.md)。
 
 多实例测试使用 `scripts/frp-validation-server.py --multi-instance` 启动两个本机 frps，并以 `adb reverse tcp:17000 tcp:17000`、`adb reverse tcp:17001 tcp:17001` 转发。可用 `-Pandroid.testInstrumentationRunnerArguments.class=io.github.xraydroid.runtime.FrpMultiInstanceTest` 限定设备测试；测试后停止 fixture 并移除这两个转发。此案例验证两个服务器同时登录，以及重启、网络等待、停止与快速启停互不影响。
+
+Hysteria 2 与官方实现的双向互通可使用主机执行文件单独验证；这些工具仅用于测试，不封装到 APK。脚本使用本机一次性证书和配置，测试 TCP／UDP 并清理子进程：
+
+```bash
+python3 scripts/verify-hysteria-interop.py \
+  --xray /path/to/host/xray \
+  --hysteria /path/to/official/hysteria
+```
 
 ## 授权与来源
 

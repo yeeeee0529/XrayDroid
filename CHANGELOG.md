@@ -1,5 +1,12 @@
 # 更新紀錄
 
+## 未發布（preview）
+
+- 更新核心基準至 3x-ui v3.11.0、Xray-core v26.11.9 與 frpc v0.72.0，移植 Android 網路綁定、程序生命週期與統計修補。
+- 上游原始碼與 Xray 下載快取依版本區分，保留舊來源；建置需求更新為 Go 1.27.3 與 Node.js 26，CI 同步檢查 `preview` 分支。
+- Android 新資料庫保留首次登入方式與既有帳號；避免輸出上游首次帳密。
+- 新增 App UID 下的 Shadowsocks AEAD／SS2022、VLESS＋REALITY＋Vision、Hysteria 2 TCP／UDP 傳輸測試，以及與官方 Hysteria 2 的主機雙向互通驗證腳本。
+
 ## 0.4.0 — 2026-11-10
 
 - 依 Material 3 Expressive 重新設計原生介面：各頁改用可收合的大型頂端列與圖示按鈕；首頁與 frp 實例共用狀態主視覺（狀態形狀徽章、轉換中顯示載入指示器）；設定、frp 實例、網路介面與匯入選項改為分段式清單。

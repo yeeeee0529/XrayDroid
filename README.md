@@ -7,7 +7,7 @@ This project packages **3x-ui + Xray-core** into an Android app that is simple t
 ## Requirements
 
 - Android 8.0 / API 26 or later, `arm64-v8a`.
-- Build: JDK 17, Android SDK 36 / Build Tools 36.0.0, Android NDK r30, Go 1.27.1, Node.js 24 or later, npm, Python 3.11 or later, Git, curl.
+- Build: JDK 17, Android SDK 36 / Build Tools 36.0.0, Android NDK r30, Go 1.27.3, Node.js 26 or later, npm, Python 3.11 or later, Git, curl.
 - The SDK path comes from `ANDROID_HOME` or `sdk.dir` in `local.properties`; the NDK path comes from `ANDROID_NDK_HOME`, which defaults to Homebrew's `/opt/homebrew/share/android-ndk` on macOS when unset.
 
 ## Build and usage
@@ -24,8 +24,10 @@ Inbounds should use a port above 1024; the service can be stopped from the app o
 
 ## Current implementation status
 
+The `preview` baseline pins 3x-ui v3.11.0, Xray-core v26.11.9, and frpc v0.72.0. Protocol validation covers Shadowsocks AEAD / SS2022, VLESS + REALITY + Vision, and Hysteria 2; observed results and limitations are recorded below.
+
 The native Material 3 Expressive interface with predictive back, foreground service, version-pinned core packaging, and Android patches are implemented; validation results are in the [progress record](docs/PROGRESS.md).
-MTProto / TUIC sidecars, Linux system administration, and core self-updates are not supported yet, and Android VPNService is not implemented.
+MTProto / TUIC inbounds, Linux system administration, and core self-updates are not supported yet, and Android VPNService is not implemented.
 
 ## License
 
