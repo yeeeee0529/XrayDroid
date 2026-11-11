@@ -2,6 +2,24 @@
 
 日期：2026-11-11。
 
+## 原生代理出站速度（2026-11-11）
+
+- 依使用者確認，在原生首頁服務狀態下方加入「代理出站速度」，分別顯示上傳／下載；約每秒更新，自動換算 B/s、KB/s、MB/s、GB/s（十進位），不顯示累計流量。沿用 Material 3 Expressive 的 `SectionHeader`、`SegmentedColumn`、`SegmentedItem` 與 `IconBadge`，沒有新增相依套件。
+- Android 專用的 3x-ui 背景取樣使用獨立 gRPC client，以 `Reset_: false` 查詢 Xray 出站計數，按各計數差值與單調時間計算速率；不共用面板累計／配額的基準，也不讀取使用者帳密、資料庫或後端日誌。只在產生的 Xray 執行設定啟用出站統計，不改寫面板保存的設定範本。
+- 取樣透過 App 私有快取的原子 JSON 快照傳至原生前景服務，檔案權限 0600；內容只有啟動識別、序號、狀態及兩個速率。每次啟動以新識別排除前次快照，連續 3 秒序號不變即失效。計數器歸零、核心更換、取樣錯誤與間隔過長均重新建立基準；停止、錯誤與等待網路時清除速度，晚到的舊程序更新不得覆蓋新狀態。
+- 更新範圍：`runtime/{ProxyTraffic,TrafficReader,RuntimeLayout,ServerStore,XuiService}.kt`、`ui/ServerDashboard.kt`、兩個方向圖示、三語系字串、`patches/3x-ui-android.patch`、相關單元／裝置／導覽測試、四份 README 與 CHANGELOG。Go 來源與測試只以補丁交付，沒有把 `upstream/` 加入 Git。
+- `scripts/build-core.sh` 完整重建成功；三個 Android arm64 核心與兩個上游前端 build 通過。修改 Go 檔案的 `gofmt -l` 為空；補丁可套用乾淨固定來源、可在目前來源反向檢查，`git diff --check` 通過。3x-ui ELF LOAD 段 16 KB 對齊。
+- 3x-ui 完整 `go test ./...` 通過（51 個有測試套件；Go 內建 ZONEINFO），相關 `go vet ./internal/web/service ./internal/web` 通過；新增流量計算／快照的 4 項 test 與相同範圍的 `-race` 通過。Xray／frp 的 Go 來源未改動，本輪沒有重跑它們的完整 Go suite。
+- JDK 17 的 `:app:ktlintFormat` 與 `:app:ktlintCheck :app:lintDebug :app:testDebugUnitTest :app:assembleDebug` 通過；34 個 JVM test 全數通過，Android lint 0 errors／0 warnings，三語系各 352 筆名稱與順序同步。裝置測試 Kotlin 編譯通過。正式 application ID 的 APK 已產生且簽章驗證通過，versionName 0.4.0／versionCode 5；SHA256 `4bbfa5f40dcd3027be75f5e96b308ee164497218f5cd9c73cc2494cd8fe567ae`。
+- Pixel 9 Pro XL／Android 17 的隔離套件實際代理速度 test 通過：經打包的 3x-ui／Xray 傳輸 100 組 16 KiB 上傳／64 KiB 下載資料並逐塊比對內容，確認速率方向、閒置歸零、重複啟動仍取樣、停止後清除。速度介面 test 亦通過，驗證上下傳標籤、B/s 到 GB/s、等待／不可用／停止的顯示。測試只在隔離套件加入本機 tunnel 與測試路由，結束後清理並還原預設範本。
+- 開發時測試 fixture 最初使用舊的 `dokodemo-door` 面板協定名稱，改為新版 `tunnel`；隨後因預設阻擋私有位址而被拒絕，已改用僅限隔離套件的專用本機路由。這兩次測試失敗已修正，沒有放寬正式套件的路由。
+- Pixel 完整 suite 預計 50 項，但 USB／adb 於第 6 項中斷：收到 5 項完成，當時執行的 frp UI 案例被記為失敗且沒有斷言內容，後續 44 項未完成。不將此輪視為完整通過。正式 Xray 服務先前已由首頁停止以釋放 2053；frp 服務未停止。Pixel 尚未重新出現在 adb 清單，待重新連線後恢復原服務。
+- 裝置測試的 Gradle UTP 暫存檔最初遭沙盒拒絕；改將 `java.io.tmpdir` 與 `TMPDIR` 指向專案快取後可執行。Kotlin daemon 受沙盒通訊限制，後續用 `-Pkotlin.compiler.execution.strategy=in-process` 完成；沒有變更專案的 Gradle 設定。
+- Android 16／arm64 模擬器完整隔離 suite：50 項全數通過、0 failures／0 errors／0 skipped（247 秒），包含四個協定的 TCP／UDP、frp 各設定與實際轉發、網路切換、新增速度計算與顯示、服務重啟／核心死亡／停止、原生設定導覽。模擬器的網路條件不取代 Pixel 真實行動網路驗證。
+- 最終交付 APK 使用原有 debug 簽章（憑證 SHA256 `786bbe3dc5b303242dbfcaa18912cdc6bd576892bfc2301aa200d3f0356d8ce0`），在模擬器以 `adb install -r` 覆蓋既有正式 application ID 成功；原生首頁啟動成功，服務運作中，上傳／下載閒置均為 `0 B/s`，已實際擷取並檢查畫面。過程中設定 `ANDROID_USER_HOME` 使測試簽章與既有模擬器套件不符，首次安裝被拒；最終交付重建時移除此測試環境覆寫，保留原簽章並驗證成功，沒有卸載或清除既有套件資料。APK：`app/build/outputs/apk/debug/app-debug.apk`；截圖：忽略的 `.core-cache/traffic-formal-home.png`。
+- frp fixture 已停止，此輪模擬器的 adb reverse 17000／17001／18080 已移除；模擬器語系恢復 en-US 並關閉。Pixel 到本輪結束仍未重新連線，因此沒有覆蓋手機正式 APK；先前暫停的 Xray 服務須在手機重新接上後恢復，或由使用者自行點「啟動服務」。
+- 限制：這是所有邏輯出站的合計，串接多層出站可能重複計入同一資料，不是實體網卡吞吐量。本輪未對其他 OEM、長時間背景取樣耗電、行動網路與所有出站串接組合逐一量測。
+
 ## Preview 覆蓋安裝至 Pixel（2026-11-11）
 
 - 依使用者要求，將 `ef904f1` 對應的 preview debug APK 以 `adb install -r` 覆蓋安裝至 Pixel 9 Pro XL（Android 17），回報 `Success`；採保留資料方式，未清除 App 資料、未卸載正式套件。APK SHA256 仍為 `da0fffb6b10659d78b5f23b58c21e386cf70136d3ba0156149a16ea7c8d890ba`，套件 `io.github.xraydroid`、versionName 0.4.0／versionCode 5，安裝時間為裝置回報的 2026-11-11 15:42:39。

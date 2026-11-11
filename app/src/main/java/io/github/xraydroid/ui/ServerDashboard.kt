@@ -43,6 +43,7 @@ import io.github.xraydroid.BuildConfig
 import io.github.xraydroid.R
 import io.github.xraydroid.runtime.ServerPhase
 import io.github.xraydroid.runtime.ServerState
+import io.github.xraydroid.runtime.TrafficStatus
 import io.github.xraydroid.ui.components.AppPage
 import io.github.xraydroid.ui.components.ButtonLabel
 import io.github.xraydroid.ui.components.IconBadge
@@ -75,6 +76,7 @@ fun ServerDashboard(
         }
     ) {
         item { StatusCard(state = state, onStart = onStart, onStop = onStop, onRestart = onRestart) }
+        item { TrafficCard(state) }
         item { PanelCard(url = state.panelUrl, enabled = running && !busy, running = running, onOpenPanel = onOpenPanel) }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -141,6 +143,63 @@ fun ServerDashboard(
             }
         }
     }
+}
+
+@Composable
+private fun TrafficCard(state: ServerState) {
+    val running = state.phase == ServerPhase.RUNNING
+    val ready = running && state.traffic.status == TrafficStatus.READY
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionHeader(stringResource(R.string.dashboard_traffic_title))
+        SegmentedColumn {
+            SegmentedItem(
+                0,
+                2,
+                stringResource(R.string.dashboard_traffic_upload),
+                leading = { IconBadge(R.drawable.ic_arrow_upward) },
+                trailing = { TrafficSpeed(state.traffic.uploadBytesPerSecond, ready) }
+            )
+            SegmentedItem(
+                1,
+                2,
+                stringResource(R.string.dashboard_traffic_download),
+                leading = { IconBadge(R.drawable.ic_arrow_downward) },
+                trailing = { TrafficSpeed(state.traffic.downloadBytesPerSecond, ready) }
+            )
+        }
+        Text(
+            stringResource(
+                when {
+                    !running -> R.string.dashboard_traffic_stopped
+                    state.traffic.status == TrafficStatus.WAITING -> R.string.dashboard_traffic_waiting
+                    state.traffic.status == TrafficStatus.UNAVAILABLE -> R.string.dashboard_traffic_unavailable
+                    else -> R.string.dashboard_traffic_description
+                }
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp).semantics { liveRegion = LiveRegionMode.Polite }
+        )
+    }
+}
+
+@Composable
+private fun TrafficSpeed(bytesPerSecond: Double, ready: Boolean) {
+    val value = if (!ready) {
+        stringResource(R.string.dashboard_traffic_no_value)
+    } else {
+        when {
+            bytesPerSecond >= 1_000_000_000 -> stringResource(R.string.dashboard_traffic_gbps, bytesPerSecond / 1_000_000_000)
+            bytesPerSecond >= 1_000_000 -> stringResource(R.string.dashboard_traffic_mbps, bytesPerSecond / 1_000_000)
+            bytesPerSecond >= 1000 -> stringResource(R.string.dashboard_traffic_kbps, bytesPerSecond / 1000)
+            else -> stringResource(R.string.dashboard_traffic_bps, bytesPerSecond)
+        }
+    }
+    Text(
+        value,
+        style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
+        color = if (ready) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)

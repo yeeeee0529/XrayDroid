@@ -809,8 +809,24 @@ index b7a9df2..3f8cd13 100644
  	basePath, err := s.getString("webBasePath")
  	if err != nil {
  		return "", err
+diff --git a/internal/web/service/xray.go b/internal/web/service/xray.go
+index 596986c..3e8b6e3 100644
+--- a/internal/web/service/xray.go
++++ b/internal/web/service/xray.go
+@@ -183,6 +183,11 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
+ 	xrayConfig.LogConfig = resolveXrayLogPaths(xrayConfig.LogConfig)
+ 	xrayConfig.API = ensureAPIServices(xrayConfig.API)
+ 	xrayConfig.Policy = ensureStatsPolicy(xrayConfig.Policy)
++	if runtime.GOOS == "android" {
++		if err := enableAndroidOutboundStats(xrayConfig); err != nil {
++			return nil, fmt.Errorf("enable Android outbound statistics: %w", err)
++		}
++	}
+ 	xrayConfig.RouterConfig = stripDisabledRules(xrayConfig.RouterConfig)
+ 	// A pasted or restored template can carry pre-#6258 XHTTP keys, a pre-26.10.10 xdns mask or a
+ 	// pre-26.9.9 quicParams.udpHop, which the core ignores, or a udphop not last, which it cannot dial.
 diff --git a/internal/web/web.go b/internal/web/web.go
-index aaee5db..c7449ee 100644
+index aaee5db..0dcac3a 100644
 --- a/internal/web/web.go
 +++ b/internal/web/web.go
 @@ -13,6 +13,7 @@ import (
@@ -833,6 +849,14 @@ index aaee5db..c7449ee 100644
  	listenAddr := net.JoinHostPort(listen, strconv.Itoa(port))
  	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", listenAddr)
  	if err != nil {
+@@ -756,6 +762,7 @@ func (s *Server) start(restartXray bool, startTgBot bool) (err error) {
+ 	})
+ 
+ 	s.startTask(restartXray, loc)
++	service.StartAndroidTraffic(s.ctx)
+ 
+ 	if startTgBot {
+ 		isTgbotenabled, err := s.settingService.GetTgbotEnabled()
 diff --git a/internal/xray/process.go b/internal/xray/process.go
 index a9d8c9c..522b9e9 100644
 --- a/internal/xray/process.go
@@ -964,3 +988,266 @@ index a2fbdce..fc15227 100644
  		log.Printf("No panel user existed, so one was generated. Username: %s  Password: %s  (shown once; change it in Panel Settings)", username, password)
  	}
  
+diff --git a/internal/web/service/android_traffic.go b/internal/web/service/android_traffic.go
+new file mode 100644
+index 0000000..785c728
+--- /dev/null
++++ b/internal/web/service/android_traffic.go
+@@ -0,0 +1,155 @@
++package service
++
++import (
++	"context"
++	"encoding/json"
++	"os"
++	"runtime"
++	"strings"
++	"time"
++
++	"github.com/mhsanaei/3x-ui/v3/internal/util/json_util"
++	"github.com/mhsanaei/3x-ui/v3/internal/xray"
++	statsService "github.com/xtls/xray-core/app/stats/command"
++)
++
++type androidTrafficSnapshot struct {
++	Session  string  `json:"session"`
++	Sequence int64   `json:"sequence"`
++	State    string  `json:"state"`
++	Upload   float64 `json:"upload"`
++	Download float64 `json:"download"`
++}
++
++type androidTrafficMeter struct {
++	process  *xray.Process
++	previous map[string]int64
++	sampled  time.Time
++}
++
++func (m *androidTrafficMeter) sample(process *xray.Process, counters map[string]int64, now time.Time) androidTrafficSnapshot {
++	result := androidTrafficSnapshot{State: "waiting"}
++	elapsed := now.Sub(m.sampled)
++	if m.previous != nil && process == m.process && elapsed > 0 && elapsed <= 3*time.Second {
++		result.State = "ready"
++		for name, value := range counters {
++			parts := strings.Split(name, ">>>")
++			if len(parts) != 4 || parts[0] != "outbound" || parts[2] != "traffic" ||
++				(parts[3] != "uplink" && parts[3] != "downlink") {
++				continue
++			}
++			previous := m.previous[name]
++			if value < previous || value < 0 {
++				result = androidTrafficSnapshot{State: "waiting"}
++				break
++			}
++			rate := float64(value-previous) / elapsed.Seconds()
++			if parts[3] == "uplink" {
++				result.Upload += rate
++			} else {
++				result.Download += rate
++			}
++		}
++	}
++	m.process, m.previous, m.sampled = process, counters, now
++	return result
++}
++
++func enableAndroidOutboundStats(c *xray.Config) error {
++	policy := make(map[string]any)
++	if len(c.Policy) > 0 && string(c.Policy) != "null" {
++		if err := json.Unmarshal(c.Policy, &policy); err != nil {
++			return err
++		}
++	}
++	system, _ := policy["system"].(map[string]any)
++	if system == nil {
++		system = make(map[string]any)
++	}
++	system["statsOutboundUplink"], system["statsOutboundDownlink"] = true, true
++	policy["system"] = system
++	data, err := json.Marshal(policy)
++	if err != nil {
++		return err
++	}
++	c.Policy = json_util.RawMessage(data)
++	c.Stats = json_util.RawMessage(`{}`)
++	return nil
++}
++
++func queryAndroidOutboundTraffic(ctx context.Context) (*xray.Process, map[string]int64, error) {
++	process := currentXrayProcess()
++	if process == nil || !process.IsRunning() {
++		return nil, nil, ErrXrayNotRunning
++	}
++	// 使用獨立用戶端與非重設查詢，不干擾面板的累計／配額基準。
++	var api xray.XrayAPI
++	if err := api.Init(process.GetAPIPort()); err != nil {
++		return nil, nil, err
++	}
++	defer api.Close()
++	ctx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
++	defer cancel()
++	response, err := (*api.StatsServiceClient).QueryStats(ctx, &statsService.QueryStatsRequest{Pattern: "outbound>>>", Reset_: false})
++	if err != nil {
++		return nil, nil, err
++	}
++	if currentXrayProcess() != process || !process.IsRunning() {
++		return nil, nil, ErrXrayNotRunning
++	}
++	counters := make(map[string]int64, len(response.GetStat()))
++	for _, stat := range response.GetStat() {
++		counters[stat.Name] = stat.Value
++	}
++	return process, counters, nil
++}
++
++func writeAndroidTraffic(file string, snapshot androidTrafficSnapshot) error {
++	data, err := json.Marshal(snapshot)
++	if err != nil {
++		return err
++	}
++	temporary := file + ".tmp"
++	if err := os.WriteFile(temporary, data, 0600); err != nil {
++		return err
++	}
++	if err := os.Rename(temporary, file); err != nil {
++		_ = os.Remove(temporary)
++		return err
++	}
++	return nil
++}
++
++// StartAndroidTraffic 只發布出站速率，不包含標籤、帳號、設定或原始核心輸出。
++func StartAndroidTraffic(ctx context.Context) {
++	file, session := os.Getenv("XUI_ANDROID_TRAFFIC_FILE"), os.Getenv("XUI_ANDROID_TRAFFIC_SESSION")
++	if runtime.GOOS != "android" || file == "" || session == "" {
++		return
++	}
++	go func() {
++		ticker := time.NewTicker(time.Second)
++		defer ticker.Stop()
++		var meter androidTrafficMeter
++		var sequence int64
++		for {
++			select {
++			case <-ctx.Done():
++				return
++			case <-ticker.C:
++				process, counters, err := queryAndroidOutboundTraffic(ctx)
++				snapshot := androidTrafficSnapshot{State: "unavailable"}
++				if err == nil {
++					snapshot = meter.sample(process, counters, time.Now())
++				} else {
++					meter = androidTrafficMeter{}
++				}
++				if ctx.Err() != nil {
++					return
++				}
++				sequence++
++				snapshot.Session, snapshot.Sequence = session, sequence
++				_ = writeAndroidTraffic(file, snapshot)
++			}
++		}
++	}()
++}
+diff --git a/internal/web/service/android_traffic_test.go b/internal/web/service/android_traffic_test.go
+new file mode 100644
+index 0000000..6d6154a
+--- /dev/null
++++ b/internal/web/service/android_traffic_test.go
+@@ -0,0 +1,96 @@
++package service
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/mhsanaei/3x-ui/v3/internal/util/json_util"
++	"github.com/mhsanaei/3x-ui/v3/internal/xray"
++)
++
++func TestAndroidTrafficRatesResetAndRecover(t *testing.T) {
++	var meter androidTrafficMeter
++	now := time.Now()
++	process := new(xray.Process)
++	up := "outbound>>>direct>>>traffic>>>uplink"
++	down := "outbound>>>direct>>>traffic>>>downlink"
++	if got := meter.sample(process, map[string]int64{up: 100, down: 300}, now); got.State != "waiting" {
++		t.Fatalf("first sample = %+v", got)
++	}
++	got := meter.sample(process, map[string]int64{up: 2100, down: 6300}, now.Add(2*time.Second))
++	if got.State != "ready" || got.Upload != 1000 || got.Download != 3000 {
++		t.Fatalf("two-second rates = %+v", got)
++	}
++	if got := meter.sample(process, map[string]int64{up: 0, down: 0}, now.Add(3*time.Second)); got.State != "waiting" {
++		t.Fatalf("reset must rebaseline: %+v", got)
++	}
++	if got := meter.sample(process, map[string]int64{up: 0, down: 0}, now.Add(4*time.Second)); got.State != "ready" || got.Upload != 0 || got.Download != 0 {
++		t.Fatalf("idle must report zero: %+v", got)
++	}
++	if got := meter.sample(new(xray.Process), map[string]int64{up: 99999}, now.Add(5*time.Second)); got.State != "waiting" {
++		t.Fatalf("new process must rebaseline: %+v", got)
++	}
++}
++
++func TestAndroidTrafficFiltersCountersAndLongGaps(t *testing.T) {
++	var meter androidTrafficMeter
++	process := new(xray.Process)
++	now := time.Now()
++	meter.sample(process, map[string]int64{}, now)
++	got := meter.sample(process, map[string]int64{
++		"outbound>>>direct>>>traffic>>>uplink":   100,
++		"outbound>>>proxy>>>traffic>>>uplink":    200,
++		"outbound>>>direct>>>traffic>>>downlink": 900,
++		"inbound>>>api>>>traffic>>>uplink":       99999,
++		"user>>>fixture>>>traffic>>>downlink":    99999,
++	}, now.Add(time.Second))
++	if got.Upload != 300 || got.Download != 900 {
++		t.Fatalf("only outbound counters must be counted: %+v", got)
++	}
++	if got := meter.sample(process, map[string]int64{}, now.Add(10*time.Second)); got.State != "waiting" {
++		t.Fatalf("long gap must rebaseline: %+v", got)
++	}
++}
++
++func TestAndroidTrafficPolicyKeepsTemplateOptions(t *testing.T) {
++	c := &xray.Config{Policy: json_util.RawMessage(`{"levels":{"0":{"connIdle":123}},"system":{"statsOutboundUplink":false,"statsInboundUplink":true}}`)}
++	if err := enableAndroidOutboundStats(c); err != nil {
++		t.Fatal(err)
++	}
++	var policy map[string]any
++	if err := json.Unmarshal(c.Policy, &policy); err != nil {
++		t.Fatal(err)
++	}
++	system := policy["system"].(map[string]any)
++	if system["statsOutboundUplink"] != true || system["statsOutboundDownlink"] != true || system["statsInboundUplink"] != true || string(c.Stats) != "{}" {
++		t.Fatalf("missing outbound stats: %s", c.Policy)
++	}
++	if policy["levels"].(map[string]any)["0"].(map[string]any)["connIdle"] != float64(123) {
++		t.Fatalf("existing level was changed: %s", c.Policy)
++	}
++}
++
++func TestAndroidTrafficSnapshotIsPrivateAndAtomic(t *testing.T) {
++	file := filepath.Join(t.TempDir(), "traffic.json")
++	for sequence := int64(1); sequence < 3; sequence++ {
++		want := androidTrafficSnapshot{Session: "test-session", Sequence: sequence, State: "ready", Upload: 123, Download: 456}
++		if err := writeAndroidTraffic(file, want); err != nil {
++			t.Fatal(err)
++		}
++		data, err := os.ReadFile(file)
++		if err != nil {
++			t.Fatal(err)
++		}
++		var got androidTrafficSnapshot
++		if err := json.Unmarshal(data, &got); err != nil || got != want {
++			t.Fatalf("snapshot mismatch: %+v, %v", got, err)
++		}
++		info, err := os.Stat(file)
++		if err != nil || info.Mode().Perm() != 0600 {
++			t.Fatalf("snapshot permissions: %v, %v", info, err)
++		}
++	}
++}

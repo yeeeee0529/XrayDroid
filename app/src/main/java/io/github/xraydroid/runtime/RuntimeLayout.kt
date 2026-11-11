@@ -7,6 +7,7 @@ import java.io.File
 class RuntimeLayout(private val context: Context) {
     val xui = File(context.applicationInfo.nativeLibraryDir, "libxui.so")
     val xray = File(context.applicationInfo.nativeLibraryDir, "libxray.so")
+    val traffic = File(context.cacheDir, "proxy-traffic.json")
     private val root = File(context.filesDir, "server")
     private val xrayData = File(root, "xray")
     private val database = File(root, "db")
@@ -35,7 +36,7 @@ class RuntimeLayout(private val context: Context) {
         marker.writeText(currentVersion)
     }
 
-    fun builder(vararg arguments: String, networkHandle: Long = 0L): ProcessBuilder = ProcessBuilder(
+    fun builder(vararg arguments: String, networkHandle: Long = 0L, trafficSession: String = ""): ProcessBuilder = ProcessBuilder(
         listOf(xui.absolutePath) + arguments
     ).apply {
         directory(root)
@@ -51,6 +52,8 @@ class RuntimeLayout(private val context: Context) {
                 "XUI_INIT_WEB_BASE_PATH" to "/",
                 "XUI_PORT" to "2053",
                 "XUI_LOG_LEVEL" to "warning",
+                "XUI_ANDROID_TRAFFIC_FILE" to traffic.absolutePath,
+                "XUI_ANDROID_TRAFFIC_SESSION" to trafficSession,
                 "TMPDIR" to context.cacheDir.absolutePath
             )
         )

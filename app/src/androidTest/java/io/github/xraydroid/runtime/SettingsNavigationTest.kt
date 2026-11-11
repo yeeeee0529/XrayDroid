@@ -77,6 +77,10 @@ class SettingsNavigationTest {
         awaitText("出站網路")
         clickText("返回首頁")
         awaitText("XrayDroid")
+        scrollToText("代理出站速度")
+        awaitText("上傳")
+        awaitText("下載")
+        scrollToText("管理面板")
         awaitText("管理面板")
         // 再次進入設定，確認返回首頁後仍保留網路選擇。
         clickText("設定")

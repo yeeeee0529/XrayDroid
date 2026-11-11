@@ -13,7 +13,8 @@ data class ServerState(
     val logs: List<String> = emptyList(),
     val panelUrl: String = "http://127.0.0.1:2053/",
     val startedAt: Long? = null,
-    val outboundNetworkLabel: TextResource? = null
+    val outboundNetworkLabel: TextResource? = null,
+    val traffic: ProxyTraffic = ProxyTraffic()
 )
 
 object ServerStore {
@@ -26,9 +27,14 @@ object ServerStore {
                 phase = phase,
                 message = message,
                 startedAt = if (phase == ServerPhase.RUNNING) System.currentTimeMillis() else null,
-                outboundNetworkLabel = if (phase == ServerPhase.RUNNING) outboundNetworkLabel else null
+                outboundNetworkLabel = if (phase == ServerPhase.RUNNING) outboundNetworkLabel else null,
+                traffic = ProxyTraffic()
             )
         }
+    }
+
+    fun updateTraffic(traffic: ProxyTraffic) {
+        mutableState.update { if (it.phase == ServerPhase.RUNNING) it.copy(traffic = traffic) else it }
     }
 
     fun log(message: String) {

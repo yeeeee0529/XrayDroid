@@ -3,6 +3,7 @@ package io.github.xraydroid.runtime
 import android.content.Context
 import android.os.StatFs
 import android.os.SystemClock
+import androidx.test.platform.app.InstrumentationRegistry
 import java.net.CookieManager
 import java.net.CookiePolicy
 import java.net.HttpURLConnection
@@ -11,6 +12,8 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
+import java.net.URLEncoder
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -20,9 +23,7 @@ internal class PanelManagementProbe {
     private var csrf = ""
 
     fun verifyLoginAndVlessInbound(context: Context) {
-        csrf = request("/csrf-token").getString("obj")
-        request("/login", JSONObject().put("username", "admin").put("password", "admin"))
-        csrf = request("/csrf-token").getString("obj")
+        login()
         val disk = awaitDiskStatus()
         val filesystem = StatFs(context.filesDir.path)
         assertEquals("Panel disk capacity must match app data filesystem", filesystem.totalBytes, disk.getLong("total"))
@@ -38,10 +39,53 @@ internal class PanelManagementProbe {
             .put("streamSettings", """{"network":"tcp","security":"none","tcpSettings":{"header":{"type":"none"}}}""")
             .put("sniffing", """{"enabled":false}""")
             .put("trafficReset", "never")
+        withInbound(inbound) { assertTrue("New VLESS inbound must be served by the packaged Xray core", listening(port)) }
+    }
+
+    fun withTcpForward(targetPort: Int, verify: (Int) -> Unit) {
+        check(InstrumentationRegistry.getInstrumentation().targetContext.packageName == "io.github.xraydroid.validation") {
+            "Traffic fixture requires the isolated validation application ID"
+        }
+        login()
+        val defaultConfig = request("/panel/api/xray/getDefaultJsonConfig").getString("obj")
+        val fixtureConfig = JSONObject(defaultConfig)
+            .put("outbounds", JSONArray().put(JSONObject().put("tag", "direct").put("protocol", "freedom").put("settings", JSONObject())))
+        val apiRule = JSONObject().put("type", "field").put("inboundTag", JSONArray().put("api")).put("outboundTag", "api")
+        fixtureConfig.getJSONObject("routing").put("rules", JSONArray().put(apiRule))
+        val port = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+        val inbound = JSONObject()
+            .put("remark", "android-traffic-e2e")
+            .put("enable", true)
+            .put("listen", "127.0.0.1")
+            .put("port", port)
+            .put("protocol", "tunnel")
+            .put(
+                "settings",
+                JSONObject().put("rewriteAddress", "127.0.0.1").put("rewritePort", targetPort).put("network", "tcp").toString()
+            )
+            .put("streamSettings", """{"network":"tcp","security":"none"}""")
+            .put("sniffing", """{"enabled":false}""")
+            .put("trafficReset", "never")
+        try {
+            request("/panel/api/xray/update", JSONObject().put("xraySetting", fixtureConfig.toString()), form = true)
+            withInbound(inbound, verify)
+        } finally {
+            request("/panel/api/xray/update", JSONObject().put("xraySetting", defaultConfig), form = true)
+        }
+    }
+
+    private fun login() {
+        csrf = request("/csrf-token").getString("obj")
+        request("/login", JSONObject().put("username", "admin").put("password", "admin"))
+        csrf = request("/csrf-token").getString("obj")
+    }
+
+    private fun withInbound(inbound: JSONObject, verify: (Int) -> Unit) {
+        val port = inbound.getInt("port")
         val id = request("/panel/api/inbounds/add", inbound).getJSONObject("obj").getInt("id")
         try {
             awaitListening(port, true)
-            assertTrue("New VLESS inbound must be served by the packaged Xray core", listening(port))
+            verify(port)
         } finally {
             request("/panel/api/inbounds/del/$id", JSONObject())
         }
@@ -59,7 +103,7 @@ internal class PanelManagementProbe {
         throw AssertionError("Panel did not publish storage statistics")
     }
 
-    private fun request(path: String, body: JSONObject? = null): JSONObject {
+    private fun request(path: String, body: JSONObject? = null, form: Boolean = false): JSONObject {
         val url = URL("http://127.0.0.1:2053$path")
         val connection = url.openConnection() as HttpURLConnection
         try {
@@ -72,10 +116,17 @@ internal class PanelManagementProbe {
             if (body != null) {
                 connection.requestMethod = "POST"
                 connection.doOutput = true
-                connection.setRequestProperty("Content-Type", "application/json")
+                connection.setRequestProperty("Content-Type", if (form) "application/x-www-form-urlencoded" else "application/json")
                 connection.setRequestProperty("X-CSRF-Token", csrf)
                 connection.setRequestProperty("Origin", "http://127.0.0.1:2053")
-                connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                val content = if (form) {
+                    body.keys().asSequence().joinToString("&") { key ->
+                        URLEncoder.encode(key, "UTF-8") + "=" + URLEncoder.encode(body.getString(key), "UTF-8")
+                    }
+                } else {
+                    body.toString()
+                }
+                connection.outputStream.use { it.write(content.toByteArray(Charsets.UTF_8)) }
             }
             check(connection.responseCode == 200) { "Panel HTTP request failed at $path" }
             cookies.put(url.toURI(), connection.headerFields)

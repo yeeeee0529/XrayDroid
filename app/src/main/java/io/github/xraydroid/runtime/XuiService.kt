@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.system.OsConstants
 import androidx.core.content.ContextCompat
 import io.github.xraydroid.MainActivity
@@ -19,16 +20,19 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.URL
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -43,6 +47,8 @@ class XuiService : Service() {
 
     @Volatile private var activeStartId = 0
     private lateinit var layout: RuntimeLayout
+    private var trafficJob: Job? = null
+    private var trafficReader: TrafficReader? = null
 
     @Volatile private var process: java.lang.Process? = null
 
@@ -179,14 +185,16 @@ class XuiService : Service() {
         // 消除關閉與 spawn 之間的 TOCTOU 空檔，避免其他 App 先佔用 127.0.0.1:2053。
         // 子程序啟動後需一段時間才會自行綁定，屆時 socket 已關閉，不影響核心綁定。
         // 取消例外也會經由 use 隨區間結束關閉 socket。
+        val trafficSession = UUID.randomUUID().toString()
         val child: java.lang.Process = ServerSocket().use { socket ->
             socket.reuseAddress = true
             socket.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 2053))
             synchronized(processLock) {
                 if (generation.get() != ticket) throw CancellationException()
-                layout.builder(networkHandle = networkHandle).start().also { process = it }
+                layout.builder(networkHandle = networkHandle, trafficSession = trafficSession).start().also { process = it }
             }
         }
+        trafficReader = TrafficReader(layout.traffic, trafficSession, SystemClock.elapsedRealtime())
         // 核心輸出可能包含登入資料；只顯示 App 自身的生命週期事件。
         scope.launch {
             runCatching {
@@ -260,6 +268,19 @@ class XuiService : Service() {
     }.getOrDefault(false)
 
     private fun monitor(child: java.lang.Process, ticket: Long, startId: Int) {
+        trafficJob?.cancel()
+        val reader = trafficReader
+        trafficJob = scope.launch {
+            while (isActive && child.isAlive) {
+                val traffic = reader?.read(SystemClock.elapsedRealtime()) ?: ProxyTraffic(TrafficStatus.UNAVAILABLE)
+                synchronized(processLock) {
+                    if (process === child && generation.get() == ticket && desiredRunning) {
+                        ServerStore.updateTraffic(traffic)
+                    }
+                }
+                delay(1000)
+            }
+        }
         scope.launch {
             child.waitFor()
             mutex.withLock {
@@ -291,6 +312,9 @@ class XuiService : Service() {
     }
 
     private suspend fun stopServer() {
+        trafficJob?.cancel()
+        trafficJob = null
+        trafficReader = null
         ServerStore.transition(ServerPhase.STOPPING, TextResource(R.string.server_message_stopping))
         val child = process
         process = null

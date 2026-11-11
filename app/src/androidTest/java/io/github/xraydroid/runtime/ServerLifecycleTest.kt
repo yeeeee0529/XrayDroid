@@ -28,6 +28,7 @@ class ServerLifecycleTest {
         try {
             XuiService.dispatch(context, XuiService.ACTION_START)
             awaitPhase(ServerPhase.RUNNING)
+            awaitTrafficReady()
             val panel = URL("http://127.0.0.1:2053/").openConnection() as HttpURLConnection
             try {
                 assertEquals(200, panel.responseCode)
@@ -58,6 +59,7 @@ class ServerLifecycleTest {
             val oldPanel = requireNotNull(ownedPid("$directory/libxui.so"))
             Os.kill(oldPanel, OsConstants.SIGKILL)
             awaitPhase(ServerPhase.ERROR)
+            assertEquals("Core death must clear transfer rates", ProxyTraffic(), ServerStore.state.value.traffic)
             awaitNoProcess("$directory/libxray.so")
 
             context.startActivity(
@@ -72,6 +74,7 @@ class ServerLifecycleTest {
             val beforeRestart = ownedPid("$directory/libxui.so")
             XuiService.dispatch(context, XuiService.ACTION_RESTART)
             awaitNewPanel("$directory/libxui.so", beforeRestart)
+            awaitTrafficReady()
             assertTrue(File(context.filesDir, "server/db/x-ui.db").isFile)
         } finally {
             XuiService.dispatch(context, XuiService.ACTION_STOP)
@@ -79,6 +82,15 @@ class ServerLifecycleTest {
         }
         assertTrue("Stopping must release panel port", !isPanelReachable())
         awaitNoProcess("${context.applicationInfo.nativeLibraryDir}/libxray.so")
+    }
+
+    private fun awaitTrafficReady() {
+        val deadline = SystemClock.elapsedRealtime() + 10000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (ServerStore.state.value.traffic.status == TrafficStatus.READY) return
+            SystemClock.sleep(100)
+        }
+        throw AssertionError("New core process did not publish fresh transfer rates")
     }
 
     private fun awaitNewPanel(path: String, previous: Int?) {

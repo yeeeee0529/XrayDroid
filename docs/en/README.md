@@ -5,9 +5,9 @@
 ## Features and scope
 
 - No root required; runs 3x-ui and Xray-core as a normal Android app on Android API 26+ arm64 devices.
-- The interface provides service status, start, stop, restart, lifecycle logs, and a browser entry point.
+- The interface provides service status, live outbound upload/download rates, start, stop, restart, lifecycle logs, and a browser entry point.
 - The native interface follows Material 3 Expressive: collapsing large top app bars, segmented lists, and a status hero. In-app back navigation supports Android predictive back and previews the previous page during the gesture.
-- Inbounds, clients, routing, and traffic statistics use the 3x-ui web panel.
+- Inbounds, clients, routing, and detailed traffic statistics use the 3x-ui web panel.
 - This is a **local proxy server**, **not** a proxy tool, and does not intercept other apps' traffic.
 - MTProto / TUIC sidecars and panel / Xray self-updates are not supported yet.
 - System statistics Android cannot read fall back to warnings or zero values; Linux systemd, Fail2ban, syslog, and installers are outside the app's scope, and some upstream menus may still appear.
@@ -47,6 +47,12 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 The management panel is fixed at `http://127.0.0.1:2053/`; the Android patch forces HTTP, the root path, and loopback listening. Panel port, path, TLS, or listening-address settings do not override this fixed Android entry point; subscription servers and inbounds still follow their own settings. The app shows only its own lifecycle logs.
 Core updates require rebuilding and installing the APK.
+
+## Live proxy speed
+
+The dashboard shows aggregate Xray outbound upload and download speeds, refreshed about once per second. Upload is traffic sent from Xray to the destination; download is traffic returned from the destination. Units use bytes per second (B/s, KB/s, MB/s, GB/s; 1 KB = 1,000 bytes). No cumulative total is displayed.
+
+Values come from Xray outbound counters, independently of Android interface statistics, frpc traffic, and panel login. Counter resets, core restarts, and long sampling gaps establish a new baseline. Idle traffic shows zero; startup, unavailable statistics, and a stopped service show a status instead of retaining old rates. The runtime configuration enables outbound statistics without modifying the stored panel template; existing panel totals and quotas keep their own sampling baseline. Chained outbounds may count the same payload at multiple outbound stages; these values are logical outbound traffic, not physical interface throughput.
 
 ## About outbound network
 
